@@ -37,26 +37,24 @@ struct CommandLogView: View {
             .padding(.horizontal, 16)
             .padding(.top, 12)
             
-            // 日志列表
-            ScrollViewReader { proxy in
-                ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 8) {
-                        ForEach(swapManager.commandLogs.indices, id: \.self) { index in
-                            let log = swapManager.commandLogs[index]
-                            logRow(log: log)
-                                .id(index)
-                        }
+            // 日志列表 - 将复杂表达式拆分为子视图
+            logListView
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
+        .background(Color(.windowBackgroundColor).opacity(0.9))
+        .clipShape(RoundedRectangle(cornerRadius: 12))
+        .shadow(color: Color.black.opacity(0.1), radius: 8, x: 0, y: 4)
+    }
+    
+    // 提取日志列表为单独的视图
+    private var logListView: some View {
+        ScrollViewReader { proxy in
+            ScrollView {
+                logContentView
+                    .onChange(of: swapManager.commandLogs) { logs in
+                        scrollToBottom(proxy: proxy, logs: logs)
                     }
-                    .padding(.horizontal, 16)
-                    .padding(.bottom, 12)
-                }
-                .onChange(of: swapManager.commandLogs) { logs in
-                    if !logs.isEmpty {
-                        withAnimation {
-                            proxy.scrollTo(logs.count - 1, anchor: .bottom)
-                        }
-                    }
-                }
             }
             .frame(height: showFullLog ? 300 : 150)
             .background(Color(.systemBackground).opacity(0.8))
@@ -66,11 +64,28 @@ struct CommandLogView: View {
                     .stroke(Color.gray.opacity(0.2), lineWidth: 1)
             )
         }
+    }
+    
+    // 提取日志内容视图
+    private var logContentView: some View {
+        LazyVStack(alignment: .leading, spacing: 8) {
+            ForEach(swapManager.commandLogs.indices, id: \.self) { index in
+                let log = swapManager.commandLogs[index]
+                logRow(log: log)
+                    .id(index)
+            }
+        }
         .padding(.horizontal, 16)
-        .padding(.vertical, 12)
-        .background(Color(.windowBackgroundColor).opacity(0.9))
-        .clipShape(RoundedRectangle(cornerRadius: 12))
-        .shadow(color: Color.black.opacity(0.1), radius: 8, x: 0, y: 4)
+        .padding(.bottom, 12)
+    }
+    
+    // 滚动到底部的函数
+    private func scrollToBottom(proxy: ScrollViewProxy, logs: [CommandLog]) {
+        if !logs.isEmpty {
+            withAnimation {
+                proxy.scrollTo(logs.count - 1, anchor: .bottom)
+            }
+        }
     }
     
     // 单行日志展示
