@@ -454,43 +454,97 @@ class SwapManager: ObservableObject {
             // 使用diskutil获取驱动器详细信息
             let output = try await executeCommandWithPlist("/usr/sbin/diskutil", arguments: ["info", "-plist", path], timeout: timeoutShort)
             
+            // 检查是否为启动卷，启动卷通常不适合存放交换文件
+            if let volumeInfo = output["VolumeInfo"] as? [String: Any],
+               let bootable = volumeInfo["BootFromThisVolume"] as? Bool,
+               bootable {
+                logInfo("排除启动卷: \(path)")
+                return false
+            }
+            
             // 检查设备类型
             if let deviceType = output["DeviceNode"] as? String {
                 // 物理设备通常具有/dev/disk开头的设备节点
                 let isPhysical = deviceType.hasPrefix("/dev/disk")
                 
                 // 进一步检查是否为外部物理设备
-                if isPhysical, let deviceProtocol = output["Protocol"] as? String {
-                    // 常见的外部物理设备协议
-                    let externalProtocols = ["USB", "Thunderbolt", "SATA", "SAS", "FireWire", "External"]
-                    let isExternal = externalProtocols.contains { deviceProtocol.contains($0) }
+                if isPhysical {
+                    // 检查是否为外部设备
+                    if let isExternal = output["External"] as? Bool {
+                        if isExternal {
+                            logInfo("确认为外部物理驱动器: \(path) (External = true)")
+                            return true
+                        }
+                    }
                     
-                    if !isExternal {
-                        // 检查是否标记为外部
-                        if let isExternalMedia = output["RemovableMedia"] as? Bool, isExternalMedia {
+                    // 检查是否为可移动媒体
+                    if let isRemovable = output["RemovableMedia"] as? Bool {
+                        if isRemovable {
+                            logInfo("确认为可移动物理驱动器: \(path) (RemovableMedia = true)")
                             return true
                         }
+                    }
+                    
+                    // 检查协议类型
+                    if let deviceProtocol = output["Protocol"] as? String {
+                        // 常见的外部物理设备协议
+                        let externalProtocols = ["USB", "Thunderbolt", "SATA", "SAS", "FireWire", "External"]
+                        let isExternalByProtocol = externalProtocols.contains { deviceProtocol.contains($0) }
                         
-                        if let isExternal = output["External"] as? Bool, isExternal {
+                        if isExternalByProtocol {
+                            logInfo("确认为外部物理驱动器: \(path) (Protocol = \(deviceProtocol))")
                             return true
                         }
-                    } else {
-                        return true
                     }
                 }
                 
                 // 排除常见的非物理驱动器类型
                 if let volumeType = output["FilesystemType"] as? String {
-                    let nonPhysicalTypes = ["autofs", "nfs", "cifs", "smbfs", "afpfs", "ftp", "apfs", "vmware", "synthetics"]
+                    // 文件系统类型不应该包括apfs，因为macOS的外部硬盘通常也是APFS格式
+                    let nonPhysicalTypes = ["autofs", "nfs", "cifs", "smbfs", "afpfs", "ftp", "vmware", "synthetics"]
                     if nonPhysicalTypes.contains(where: { volumeType.lowercased().contains($0.lowercased()) }) {
                         logInfo("排除非物理驱动器: \(path) (类型: \(volumeType))")
                         return false
                     }
                 }
                 
-                return isPhysical
+                // 如果是本地系统盘但不是外部设备，则排除
+                if let volumeName = output["VolumeName"] as? String {
+                    let systemVolumeNames = ["Macintosh HD", "Macintosh HD - Data"]
+                    if systemVolumeNames.contains(volumeName) {
+                        logInfo("排除系统盘: \(path) (名称: \(volumeName))")
+                        return false
+                    }
+                }
+                
+                // 检查挂载点路径是否为TimeMachine相关
+                if path.contains("TimeMachine") || path.contains("timemachine") || path.contains("backup") || path.contains("备份") {
+                    logInfo("排除备份卷: \(path)")
+                    return false
+                }
+                
+                // 如果是物理设备但没有明确的外部标志，默认为本地设备
+                if isPhysical {
+                    logInfo("驱动器似乎是物理设备，但不是明确的外部设备: \(path)")
+                    
+                    // 如果不是系统盘目录的一部分，可能是USB或Thunderbolt外部驱动器
+                    if !path.hasPrefix("/System") && !path.hasPrefix("/private") && !path.hasPrefix("/Library") {
+                        // 检查路径是否在/Volumes下但不是系统相关卷
+                        let isInVolumes = path.hasPrefix("/Volumes/")
+                        if isInVolumes {
+                            logInfo("判定为可能的外部驱动器: \(path)")
+                            return true
+                        }
+                    }
+                    
+                    // 默认不是外部设备
+                    return false
+                }
+                
+                return false
             }
             
+            logInfo("无法确定驱动器类型: \(path)")
             return false
         } catch {
             logError("检查驱动器类型失败: \(path), 错误: \(error.localizedDescription)")
