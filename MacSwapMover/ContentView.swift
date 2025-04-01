@@ -275,8 +275,14 @@ struct ContentView: View {
             // 选择外部驱动器
             if swapManager.availableExternalDrives.isEmpty {
                 VStack(spacing: 12) {
-                    Text("未检测到外部驱动器")
+                    Text("未检测到合适的外部驱动器")
                         .font(.headline)
+                    
+                    Text("请连接物理外部硬盘，如USB硬盘或Thunderbolt存储设备")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal)
                     
                     Button(action: {
                         swapManager.findAvailableExternalDrives()
@@ -288,6 +294,7 @@ struct ContentView: View {
                         .frame(minWidth: 100)
                     }
                     .disabled(swapManager.isLoading)
+                    .padding(.top, 8)
                 }
                 .padding()
                 .frame(maxWidth: .infinity)
@@ -295,8 +302,25 @@ struct ContentView: View {
                 .cornerRadius(12)
             } else {
                 VStack(alignment: .leading, spacing: 12) {
-                    Text("选择外部驱动器")
-                        .font(.headline)
+                    HStack {
+                        Text("选择外部驱动器")
+                            .font(.headline)
+                        
+                        Spacer()
+                        
+                        Text("\(swapManager.availableExternalDrives.count)个可用")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 4)
+                            .background(Color.blue.opacity(0.1))
+                            .cornerRadius(8)
+                    }
+                    
+                    Text("只显示物理外部硬盘，网络驱动器和虚拟磁盘已被过滤")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                        .padding(.bottom, 4)
                     
                     ForEach(swapManager.availableExternalDrives) { drive in
                         Button(action: {

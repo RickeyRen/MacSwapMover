@@ -386,9 +386,11 @@ class SwapManager: ObservableObject {
             
             for volume in volumes {
                 if let drive = await extractDriveInfo(from: volume) {
-                    // Only add if it's not the boot volume
+                    // 只添加如果它不是启动卷并且是物理硬盘
                     let isBootVolume = await checkIsBootVolumeAsync(path: volume.path)
-                    if !isBootVolume {
+                    let isPhysicalDrive = await isPhysicalExternalDriveAsync(path: volume.path)
+                    
+                    if !isBootVolume && isPhysicalDrive {
                         drives.append(drive)
                     }
                 }
@@ -441,6 +443,57 @@ class SwapManager: ObservableObject {
             }
             return false
         } catch {
+            return false
+        }
+    }
+    
+    /// 检查是否为物理外部硬盘而不是网络驱动器或虚拟卷
+    private func isPhysicalExternalDriveAsync(path: String) async -> Bool {
+        do {
+            logInfo("检查驱动器类型: \(path)")
+            // 使用diskutil获取驱动器详细信息
+            let output = try await executeCommandWithPlist("/usr/sbin/diskutil", arguments: ["info", "-plist", path], timeout: timeoutShort)
+            
+            // 检查设备类型
+            if let deviceType = output["DeviceNode"] as? String {
+                // 物理设备通常具有/dev/disk开头的设备节点
+                let isPhysical = deviceType.hasPrefix("/dev/disk")
+                
+                // 进一步检查是否为外部物理设备
+                if isPhysical, let deviceProtocol = output["Protocol"] as? String {
+                    // 常见的外部物理设备协议
+                    let externalProtocols = ["USB", "Thunderbolt", "SATA", "SAS", "FireWire", "External"]
+                    let isExternal = externalProtocols.contains { deviceProtocol.contains($0) }
+                    
+                    if !isExternal {
+                        // 检查是否标记为外部
+                        if let isExternalMedia = output["RemovableMedia"] as? Bool, isExternalMedia {
+                            return true
+                        }
+                        
+                        if let isExternal = output["External"] as? Bool, isExternal {
+                            return true
+                        }
+                    } else {
+                        return true
+                    }
+                }
+                
+                // 排除常见的非物理驱动器类型
+                if let volumeType = output["FilesystemType"] as? String {
+                    let nonPhysicalTypes = ["autofs", "nfs", "cifs", "smbfs", "afpfs", "ftp", "apfs", "vmware", "synthetics"]
+                    if nonPhysicalTypes.contains(where: { volumeType.lowercased().contains($0.lowercased()) }) {
+                        logInfo("排除非物理驱动器: \(path) (类型: \(volumeType))")
+                        return false
+                    }
+                }
+                
+                return isPhysical
+            }
+            
+            return false
+        } catch {
+            logError("检查驱动器类型失败: \(path), 错误: \(error.localizedDescription)")
             return false
         }
     }

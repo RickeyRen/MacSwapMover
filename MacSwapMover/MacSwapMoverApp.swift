@@ -117,13 +117,28 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             window.contentMinSize = NSSize(width: 720, height: 620)
             
             // 启用自动调整大小以适应内容
-            window.setContentSize(NSSize(width: 720, height: 720))
+            let initialHeight: CGFloat = 750 // 设置更合适的初始高度
+            window.setContentSize(NSSize(width: 720, height: initialHeight))
             window.contentAspectRatio = NSSize(width: 720, height: 0) // 固定宽度，高度自由
+            
+            // 设置窗口显示在屏幕中央
+            window.center()
             
             // 为内容视图添加自动布局约束
             if let contentView = window.contentView {
                 contentView.translatesAutoresizingMaskIntoConstraints = false
                 window.contentAspectRatio = NSSize(width: 0, height: 0) // 关闭宽高比约束
+            }
+            
+            // 延迟一小段时间后再次调整大小，确保所有内容都已加载
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                if let contentSize = window.contentView?.fittingSize {
+                    let newSize = NSSize(
+                        width: contentSize.width,
+                        height: max(contentSize.height, 620)
+                    )
+                    window.setContentSize(newSize)
+                }
             }
         }
     }
