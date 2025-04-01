@@ -20,6 +20,7 @@ struct ContentView: View {
     @State private var isLoading = false
     @State private var loadingMessage = "Processing..."
     @State private var cancellables = Set<AnyCancellable>()
+    @State private var showSettings = false
     
     // MARK: - Color Definitions
     private var backgroundColor = Color(.windowBackgroundColor)
@@ -62,58 +63,20 @@ struct ContentView: View {
     
     var body: some View {
         ZStack {
-            // Background color
-            backgroundColor.edgesIgnoringSafeArea(.all)
+            // 背景
+            Color(.windowBackgroundColor).edgesIgnoringSafeArea(.all)
             
             VStack(spacing: 0) {
-                // Header area
-                headerView
+                // 头部区域
+                header
                 
-                // Main content
-                VStack(spacing: 24) {
-                    // Error notification
-                    if let error = errorMessage {
-                        notificationBanner
-                            .padding(.bottom, 4)
-                            .transition(.move(edge: .top).combined(with: .opacity))
-                            .animation(.easeInOut(duration: 0.3), value: errorMessage)
-                    }
-                    
-                    // Status section
-                    statusSection
-                    
-                    // Divider with icon
-                    dividerWithIcon(systemName: "arrow.down")
-                    
-                    // Action section
-                    actionSection
-                    
-                    // 命令日志视图
-                    if !swapManager.commandLogs.isEmpty {
-                        CommandLogView(swapManager: swapManager)
-                            .transition(.move(edge: .bottom).combined(with: .opacity))
-                            .animation(.easeInOut(duration: 0.3), value: !swapManager.commandLogs.isEmpty)
-                    }
-                }
-                .padding(.horizontal, 24)
-                .padding(.top, 12)
-                .padding(.bottom, 24)
-                
-                Spacer()
-                
-                // Footer
-                footerView
+                // 主要内容区域
+                contentArea
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            
-            // Loading overlay
-            if isLoading {
-                loadingOverlay
-                    .transition(.opacity)
-                    .animation(.easeInOut(duration: 0.2), value: isLoading)
-            }
         }
-        .frame(width: 720, height: 720)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .fixedSize(horizontal: false, vertical: true) // 允许垂直方向自动调整大小
         .onAppear {
             isInitializing = true
             isLoading = true
@@ -171,330 +134,327 @@ struct ContentView: View {
         }
     }
     
-    // MARK: - UI Components
-    
-    private var headerView: some View {
+    private var header: some View {
         VStack(spacing: 0) {
-            // 标题栏
-            ZStack(alignment: .bottom) {
-                AppColors.accentGradient
-                    .frame(height: 110)
-                    .overlay(
-                        Circle()
-                            .fill(.white.opacity(0.05))
-                            .frame(width: 200)
-                            .offset(x: 50, y: -80)
-                    )
+            HStack(spacing: 16) {
+                // 应用标题和图标
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Mac Swap Mover")
+                        .font(.system(size: 28, weight: .bold))
+                        .foregroundColor(.primary)
+                    
+                    Text("优化您的系统性能，将交换文件移至外部驱动器")
+                        .font(.subheadline)
+                        .foregroundColor(.secondary)
+                }
                 
-                VStack(spacing: 0) {
-                    // App icon and title
-                    HStack(spacing: 16) {
-                        // App icon
-                        ZStack {
-                            Circle()
-                                .fill(.white.opacity(0.15))
-                                .frame(width: 56, height: 56)
-                            
-                            Image(systemName: "arrow.triangle.2.circlepath")
-                                .font(.system(size: 26, weight: .light))
-                                .foregroundColor(.white)
-                        }
+                Spacer()
+                
+                // SIP状态图标
+                VStack(alignment: .trailing, spacing: 4) {
+                    HStack(spacing: 6) {
+                        Text(swapManager.isSIPDisabled ? "SIP已禁用" : "SIP已启用")
+                            .font(.caption)
+                            .foregroundColor(swapManager.isSIPDisabled ? .green : .red)
                         
-                        // App title
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("MacSwap Mover")
-                                .font(.system(size: 22, weight: .bold))
-                                .foregroundColor(.white)
-                            
-                            Text("Optimize your system with external swap")
-                                .font(.system(size: 13, weight: .medium))
-                                .foregroundColor(.white.opacity(0.8))
-                        }
-                        
-                        Spacer()
+                        Image(systemName: swapManager.isSIPDisabled ? "lock.open.fill" : "lock.fill")
+                            .foregroundColor(swapManager.isSIPDisabled ? .green : .red)
                     }
-                    .padding(.horizontal, 32)
-                    .padding(.bottom, 20)
+                    
+                    Button(action: {
+                        swapManager.checkSIPStatus()
+                    }) {
+                        Text("检查SIP状态")
+                            .font(.caption)
+                    }
+                    .buttonStyle(.link)
+                    .padding(.top, 2)
                 }
             }
+            .padding(.horizontal, 24)
+            .padding(.top, 20)
+            .padding(.bottom, 16)
             
-            // 添加一个占位区域，创造标题栏和内容之间的分隔
+            // 分隔线 - 使用渐变色实现更自然的过渡
             Rectangle()
                 .fill(
                     LinearGradient(
-                        gradient: Gradient(colors: [
-                            AppColors.accentSecondary.opacity(0.3),
-                            backgroundColor
-                        ]),
+                        gradient: Gradient(colors: [Color(.windowBackgroundColor).opacity(0.4), Color(.windowBackgroundColor).opacity(0.1)]),
                         startPoint: .top,
                         endPoint: .bottom
                     )
                 )
-                .frame(height: 20) // 增加占位高度
+                .frame(height: 20)
         }
-        .frame(height: 130) // 调整总高度以包含占位区域
+        .background(
+            Color(.windowBackgroundColor)
+                .shadow(color: Color.black.opacity(0.1), radius: 4, x: 0, y: 4)
+        )
+        .fixedSize(horizontal: false, vertical: true) // 确保头部高度适应内容
+    }
+    
+    private var contentArea: some View {
+        VStack(spacing: 24) {
+            // 状态显示区域
+            statusSection
+            
+            // 动作/操作区域
+            actionSection
+            
+            // 命令日志区域 - 只有在有日志时才显示
+            if !swapManager.commandLogs.isEmpty {
+                CommandLogView(swapManager: swapManager)
+                    .transition(.opacity.combined(with: .move(edge: .bottom)))
+                    .animation(.easeInOut, value: !swapManager.commandLogs.isEmpty)
+                    .fixedSize(horizontal: false, vertical: true) // 确保高度适应内容
+            }
+        }
+        .padding(.horizontal, 24)
+        .padding(.top, 12)
+        .padding(.bottom, 24)
+        .fixedSize(horizontal: false, vertical: true) // 允许垂直方向自动调整大小
     }
     
     private var statusSection: some View {
         VStack(spacing: 20) {
-            swapFileLocationCard
-            swapFileStatusCard
-        }
-    }
-    
-    private var swapFileLocationCard: some View {
-        GlassCard {
+            // 当前交换文件状态
             VStack(alignment: .leading, spacing: 8) {
-                HStack {
-                    Image(systemName: swapManager.currentSwapLocation == .internalDrive ? "internaldrive" : "externaldrive")
-                        .font(.system(size: 18))
-                        .foregroundColor(accentColor)
+                Text("当前交换文件位置")
+                    .font(.headline)
+                
+                HStack(spacing: 20) {
+                    statusCard(
+                        title: "内部驱动器",
+                        iconName: "internaldrive",
+                        isActive: swapManager.currentSwapLocation == .internalDrive
+                    )
                     
-                    Text("交换文件位置")
-                        .font(.headline)
-                        .foregroundColor(primaryTextColor)
+                    statusCard(
+                        title: "外部驱动器",
+                        iconName: "externaldrive",
+                        isActive: swapManager.currentSwapLocation == .external
+                    )
                 }
-                
-                Divider()
-                
-                HStack(spacing: 12) {
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text("当前位置:")
-                            .font(.subheadline)
-                            .foregroundColor(secondaryTextColor)
-                        
-                        Text(swapManager.currentSwapLocation == .internalDrive ? 
-                             "/var/vm/swapfile" : 
-                             (swapManager.selectedExternalDrive?.path ?? "") + "/private/var/vm/swapfile")
-                            .font(.system(size: 14, weight: .medium, design: .monospaced))
-                            .foregroundColor(primaryTextColor)
-                            .lineLimit(1)
-                    }
+            }
+            .padding(16)
+            .background(Color(.textBackgroundColor).opacity(0.5))
+            .cornerRadius(12)
+            
+            if let error = swapManager.lastError {
+                // 错误提示
+                HStack {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .foregroundColor(.red)
+                    
+                    Text(error)
+                        .font(.callout)
+                        .foregroundColor(.red)
                     
                     Spacer()
                     
                     Button(action: {
-                        swapManager.detectSwapLocation()
+                        swapManager.lastError = nil
                     }) {
-                        Image(systemName: "arrow.clockwise")
-                            .font(.system(size: 14))
-                            .foregroundColor(accentColor)
+                        Image(systemName: "xmark.circle.fill")
+                            .foregroundColor(.gray)
                     }
-                    .buttonStyle(.borderless)
+                    .buttonStyle(.plain)
                 }
+                .padding()
+                .background(Color.red.opacity(0.1))
+                .cornerRadius(8)
+                .transition(.opacity.combined(with: .move(edge: .top)))
+                .animation(.easeInOut, value: swapManager.lastError != nil)
             }
         }
-    }
-    
-    private var swapFileStatusCard: some View {
-        GlassCard {
-            VStack(alignment: .leading, spacing: 8) {
-                HStack {
-                    Image(systemName: "gauge.with.dots.needle.50percent")
-                        .font(.system(size: 18))
-                        .foregroundColor(accentColor)
-                    
-                    Text("系统状态")
-                        .font(.headline)
-                        .foregroundColor(primaryTextColor)
-                }
-                
-                Divider()
-                
-                HStack {
-                    VStack(alignment: .leading, spacing: 6) {
-                        statusRow(label: "SIP 状态:", value: swapManager.isSIPDisabled ? "已禁用 (必需)" : "已启用 (无法进行操作)")
-                        statusRow(label: "当前位置:", value: swapManager.currentSwapLocation == .internalDrive ? "内部驱动器" : "外部驱动器")
-                        statusRow(label: "可用驱动器:", value: "\(swapManager.availableExternalDrives.count) 个")
-                    }
-                    
-                    Spacer()
-                    
-                    ZStack {
-                        Circle()
-                            .stroke(
-                                Color.gray.opacity(0.3),
-                                lineWidth: 8
-                            )
-                            .frame(width: 60, height: 60)
-                        
-                        Circle()
-                            .trim(from: 0, to: swapManager.isSIPDisabled ? 1.0 : 0.0)
-                            .stroke(
-                                swapManager.isSIPDisabled ? Color.green : Color.red,
-                                style: StrokeStyle(
-                                    lineWidth: 8,
-                                    lineCap: .round
-                                )
-                            )
-                            .frame(width: 60, height: 60)
-                            .rotationEffect(.degrees(-90))
-                        
-                        Image(systemName: swapManager.isSIPDisabled ? "checkmark" : "xmark")
-                            .font(.system(size: 20, weight: .bold))
-                            .foregroundColor(swapManager.isSIPDisabled ? Color.green : Color.red)
-                    }
-                }
-                
-                // SIP 状态说明
-                if !swapManager.isSIPDisabled {
-                    Divider()
-                        .padding(.top, 4)
-                    
-                    infoMessage(
-                        text: "要禁用 SIP，请重启进入恢复模式（开机时按住 ⌘+R），然后在终端中运行 'csrutil disable'",
-                        icon: "exclamationmark.triangle.fill",
-                        color: warningColor
-                    )
-                    .padding(.top, 4)
-                }
-            }
-        }
-    }
-    
-    private func statusRow(label: String, value: String) -> some View {
-        HStack(spacing: 4) {
-            Text(label)
-                .font(.subheadline)
-                .foregroundColor(secondaryTextColor)
-            
-            Text(value)
-                .font(.subheadline)
-                .foregroundColor(primaryTextColor)
-                .fontWeight(.medium)
-        }
+        .fixedSize(horizontal: false, vertical: true) // 确保高度适应内容
     }
     
     private var actionSection: some View {
         VStack(spacing: 20) {
-            if swapManager.currentSwapLocation == .internalDrive {
-                // Button to move swap to external drive
-                primaryButton(
-                    title: "移动交换文件到外部驱动器",
-                    systemImage: "arrow.right.doc.on.clipboard",
-                    action: { 
-                        // Only show drive selection if there are available drives
-                        if swapManager.availableExternalDrives.isEmpty {
-                            errorMessage = "未检测到外部驱动器。请连接外部驱动器并重试。"
-                        } else if !swapManager.isSIPDisabled {
-                            errorMessage = "必须先禁用系统完整性保护（SIP）。"
-                        } else {
-                            // Show drive selection or perform move
-                            isLoading = true
-                            loadingMessage = "正在移动交换文件..."
-                            
-                            // Select the first drive if none selected
-                            if swapManager.selectedExternalDrive == nil && !swapManager.availableExternalDrives.isEmpty {
-                                swapManager.selectedExternalDrive = swapManager.availableExternalDrives.first
-                            }
-                            
-                            Task {
-                                let result = await swapManager.moveSwapFile(to: .external)
-                                
-                                await MainActor.run {
-                                    isLoading = false
-                                    
-                                    switch result {
-                                    case .success:
-                                        showSuccessAlert = true
-                                    case .failure(let error):
-                                        errorMessage = error.localizedDescription
-                                    }
-                                }
-                            }
+            // 选择外部驱动器
+            if swapManager.availableExternalDrives.isEmpty {
+                VStack(spacing: 12) {
+                    Text("未检测到外部驱动器")
+                        .font(.headline)
+                    
+                    Button(action: {
+                        swapManager.findAvailableExternalDrives()
+                    }) {
+                        HStack {
+                            Image(systemName: "arrow.clockwise")
+                            Text("刷新")
                         }
+                        .frame(minWidth: 100)
                     }
-                )
+                    .disabled(swapManager.isLoading)
+                }
+                .padding()
+                .frame(maxWidth: .infinity)
+                .background(Color(.textBackgroundColor).opacity(0.5))
+                .cornerRadius(12)
             } else {
-                // Button to move swap back to internal drive
-                primaryButton(
-                    title: "移动交换文件回内部驱动器",
-                    systemImage: "arrow.left.doc.on.clipboard",
-                    action: { 
-                        if !swapManager.isSIPDisabled {
-                            errorMessage = "必须先禁用系统完整性保护（SIP）。"
-                        } else {
-                            isLoading = true
-                            loadingMessage = "正在移动交换文件..."
-                            
-                            Task {
-                                let result = await swapManager.moveSwapFile(to: .internalDrive)
+                VStack(alignment: .leading, spacing: 12) {
+                    Text("选择外部驱动器")
+                        .font(.headline)
+                    
+                    ForEach(swapManager.availableExternalDrives) { drive in
+                        Button(action: {
+                            swapManager.selectedExternalDrive = drive
+                        }) {
+                            HStack {
+                                Image(systemName: "externaldrive.fill")
+                                    .foregroundColor(.blue)
                                 
-                                await MainActor.run {
-                                    isLoading = false
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(drive.name)
+                                        .font(.system(size: 14, weight: .medium))
                                     
-                                    switch result {
-                                    case .success:
-                                        showSuccessAlert = true
-                                    case .failure(let error):
-                                        errorMessage = error.localizedDescription
-                                    }
+                                    Text("\(drive.availableSpace) 可用 / \(drive.size) 总容量")
+                                        .font(.system(size: 12))
+                                        .foregroundColor(.secondary)
+                                }
+                                
+                                Spacer()
+                                
+                                if drive.id == swapManager.selectedExternalDrive?.id {
+                                    Image(systemName: "checkmark.circle.fill")
+                                        .foregroundColor(.green)
                                 }
                             }
+                            .padding(10)
+                        }
+                        .buttonStyle(.plain)
+                        .background(
+                            RoundedRectangle(cornerRadius: 8)
+                                .fill(drive.id == swapManager.selectedExternalDrive?.id ? Color.blue.opacity(0.1) : Color.clear)
+                        )
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 8)
+                                .stroke(Color.gray.opacity(0.2), lineWidth: 1)
+                        )
+                    }
+                    
+                    HStack {
+                        Button(action: {
+                            swapManager.findAvailableExternalDrives()
+                        }) {
+                            HStack {
+                                Image(systemName: "arrow.clockwise")
+                                Text("刷新驱动器列表")
+                            }
+                        }
+                        .disabled(swapManager.isLoading)
+                        
+                        Spacer()
+                        
+                        if swapManager.selectedExternalDrive != nil {
+                            Button(action: {
+                                swapManager.selectedExternalDrive = nil
+                            }) {
+                                Text("取消选择")
+                                    .foregroundColor(.red)
+                            }
+                            .buttonStyle(.plain)
                         }
                     }
-                )
+                    .padding(.top, 8)
+                }
+                .padding()
+                .background(Color(.textBackgroundColor).opacity(0.5))
+                .cornerRadius(12)
             }
             
-            secondaryButton(
-                title: "检查系统状态",
-                systemImage: "magnifyingglass",
-                action: { 
-                    isLoading = true
-                    loadingMessage = "正在检查系统状态..."
-                    
+            // 操作按钮
+            VStack(spacing: 16) {
+                // 内部移动到外部按钮
+                Button(action: {
                     Task {
-                        await withTaskGroup(of: Void.self) { group in
-                            group.addTask {
-                                await swapManager.checkSIPStatusAsync()
-                            }
-                            
-                            group.addTask {
-                                await swapManager.detectSwapLocationAsync()
-                            }
-                            
-                            group.addTask {
-                                await swapManager.findAvailableExternalDrivesAsync()
-                            }
-                        }
-                        
-                        await MainActor.run {
-                            isLoading = false
-                            
-                            if let error = swapManager.lastError {
-                                errorMessage = error
-                            }
+                        let result = await swapManager.moveSwapFile(to: .external)
+                        switch result {
+                        case .success:
+                            swapManager.lastError = nil
+                        case .failure(let error):
+                            swapManager.lastError = error.localizedDescription
                         }
                     }
+                }) {
+                    HStack {
+                        Image(systemName: "arrow.right.circle.fill")
+                        Text("移动到外部驱动器")
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding()
+                    .background(
+                        RoundedRectangle(cornerRadius: 8)
+                            .fill(Color.blue)
+                    )
+                    .foregroundColor(.white)
                 }
-            )
+                .disabled(swapManager.isLoading || !swapManager.isSIPDisabled || swapManager.selectedExternalDrive == nil || swapManager.currentSwapLocation == .external)
+                
+                // 外部移动到内部按钮
+                Button(action: {
+                    Task {
+                        let result = await swapManager.moveSwapFile(to: .internalDrive)
+                        switch result {
+                        case .success:
+                            swapManager.lastError = nil
+                        case .failure(let error):
+                            swapManager.lastError = error.localizedDescription
+                        }
+                    }
+                }) {
+                    HStack {
+                        Image(systemName: "arrow.left.circle.fill")
+                        Text("移回内部驱动器")
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding()
+                    .background(
+                        RoundedRectangle(cornerRadius: 8)
+                            .fill(Color.green)
+                    )
+                    .foregroundColor(.white)
+                }
+                .disabled(swapManager.isLoading || !swapManager.isSIPDisabled || swapManager.currentSwapLocation == .internalDrive)
+            }
+            
+            if swapManager.isLoading {
+                ProgressView()
+                    .progressViewStyle(CircularProgressViewStyle())
+                    .scaleEffect(1.5)
+                    .frame(height: 60)
+            }
         }
+        .fixedSize(horizontal: false, vertical: true) // 确保高度适应内容
+        .animation(.easeInOut, value: swapManager.isLoading)
+        .animation(.easeInOut, value: swapManager.availableExternalDrives.isEmpty)
     }
     
-    private var footerView: some View {
-        HStack {
-            // Credits
-            Text("© 2025 RENJIAWEI")
-                .font(.caption)
-                .foregroundColor(secondaryTextColor)
+    private func statusCard(title: String, iconName: String, isActive: Bool) -> some View {
+        VStack(spacing: 12) {
+            Image(systemName: iconName.appending(isActive ? ".fill" : ""))
+                .font(.system(size: 28))
+                .foregroundColor(isActive ? .green : .gray)
             
-            Spacer()
+            Text(title)
+                .font(.callout)
+                .foregroundColor(isActive ? .primary : .secondary)
             
-            // Additional info button
-            Button(action: {
-                // TODO: Show info panel
-            }) {
-                Label("Help", systemImage: "questionmark.circle")
-                    .font(.caption)
-            }
-            .buttonStyle(.borderless)
+            Text(isActive ? "当前位置" : "")
+                .font(.caption2)
+                .foregroundColor(.green)
         }
-        .padding(.horizontal, 32)
-        .padding(.vertical, 14)
+        .frame(maxWidth: .infinity)
+        .padding(16)
         .background(
-            Rectangle()
-                .fill(backgroundColor)
-                .shadow(color: Color.black.opacity(0.05), radius: 3, y: -2)
+            RoundedRectangle(cornerRadius: 8)
+                .fill(isActive ? Color.green.opacity(0.1) : Color(.textBackgroundColor))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(isActive ? Color.green.opacity(0.5) : Color.gray.opacity(0.2), lineWidth: 1)
         )
     }
     

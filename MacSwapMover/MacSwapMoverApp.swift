@@ -9,13 +9,15 @@ import SwiftUI
 
 @main
 struct MacSwapMoverApp: App {
+    
+    @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
+    
     var body: some Scene {
         WindowGroup {
             ContentView()
-                .frame(width: 720, height: 720)
-                .onAppear {
-                    setupAppearance()
-                }
+                .frame(minWidth: 680, minHeight: 620)
+                // 使用固定最小尺寸，但允许自动调整大小
+                .background(SizeReporterView())
         }
         .windowStyle(HiddenTitleBarWindowStyle())
         .commands {
@@ -46,33 +48,82 @@ struct MacSwapMoverApp: App {
             }
         }
     }
+}
+
+struct SizeReporterView: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSView {
+        let view = SizeReporterNSView()
+        return view
+    }
     
-    private func setupAppearance() {
-        // Setup window appearance
-        NSWindow.allowsAutomaticWindowTabbing = false
-        
-        // Set window title style
-        let windows = NSApplication.shared.windows
-        for window in windows {
-            // 设置标题栏透明
-            window.titlebarAppearsTransparent = true
-            window.titleVisibility = .hidden
-            window.backgroundColor = NSColor.windowBackgroundColor
-            window.styleMask.insert(.fullSizeContentView)
+    func updateNSView(_ nsView: NSView, context: Context) {
+        // 内容更新时调整窗口大小
+        guard let window = nsView.window else { return }
+        DispatchQueue.main.async {
+            window.autorecalculatesKeyViewLoop = true
             
-            // 设置窗口大小精确匹配内容
-            window.setContentSize(NSSize(width: 720, height: 720))
+            // 让窗口重新计算其内容大小
+            let contentSize = window.contentView?.fittingSize ?? NSSize(width: 720, height: 720)
+            let newSize = NSSize(
+                width: max(contentSize.width, 720),
+                height: max(contentSize.height, 620)
+            )
             
-            // 移除边距，使内容填充窗口
-            if let contentView = window.contentView {
-                contentView.wantsLayer = true
-                // 设置内容视图填充整个窗口区域
-                contentView.frame = NSRect(x: 0, y: 0, width: 720, height: 720)
+            // 限制最大高度，避免窗口过大
+            let maxHeight: CGFloat = 900
+            let finalHeight = min(newSize.height, maxHeight)
+            let finalSize = NSSize(width: newSize.width, height: finalHeight)
+            
+            // 仅当尺寸有实质性变化时才调整
+            if abs(window.frame.size.height - finalSize.height) > 20 {
+                window.setContentSize(finalSize)
             }
+        }
+    }
+    
+    class SizeReporterNSView: NSView {
+        override func layout() {
+            super.layout()
+            // 每次布局更新时通知窗口可能需要调整大小
+            guard let window = self.window else { return }
             
-            // 移除标题栏分隔线
-            if #available(macOS 11.0, *) {
-                window.titlebarSeparatorStyle = .none
+            NotificationCenter.default.post(
+                name: NSView.frameDidChangeNotification,
+                object: window.contentView
+            )
+        }
+    }
+}
+
+class AppDelegate: NSObject, NSApplicationDelegate {
+    
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        setupAppearance()
+    }
+    
+    func setupAppearance() {
+        // 配置基本窗口尺寸和外观
+        if let window = NSApplication.shared.windows.first {
+            // 设置窗口最小尺寸，保证UI不会被压缩得太小
+            window.minSize = NSSize(width: 720, height: 620)
+            
+            // 配置窗口样式
+            window.isOpaque = false
+            window.backgroundColor = NSColor.windowBackgroundColor.withAlphaComponent(0.98)
+            window.hasShadow = true
+            
+            // 启用尺寸自动调整（关键设置）
+            window.styleMask.insert(.resizable)
+            window.contentMinSize = NSSize(width: 720, height: 620)
+            
+            // 启用自动调整大小以适应内容
+            window.setContentSize(NSSize(width: 720, height: 720))
+            window.contentAspectRatio = NSSize(width: 720, height: 0) // 固定宽度，高度自由
+            
+            // 为内容视图添加自动布局约束
+            if let contentView = window.contentView {
+                contentView.translatesAutoresizingMaskIntoConstraints = false
+                window.contentAspectRatio = NSSize(width: 0, height: 0) // 关闭宽高比约束
             }
         }
     }
