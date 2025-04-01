@@ -59,6 +59,53 @@ class SwapManager: ObservableObject {
     private let timeoutShort: UInt64 = 3_000_000_000 // 3 seconds
     private let timeoutMedium: UInt64 = 5_000_000_000 // 5 seconds
     private let timeoutLong: UInt64 = 15_000_000_000 // 15 seconds
+    private let isDebugMode = true // 开启调试模式
+    
+    // MARK: - 日志功能
+    
+    private func logInfo(_ message: String) {
+        if isDebugMode {
+            let dateFormatter = DateFormatter()
+            dateFormatter.dateFormat = "HH:mm:ss.SSS"
+            let timestamp = dateFormatter.string(from: Date())
+            print("[\(timestamp)] ℹ️ INFO: \(message)")
+        }
+    }
+    
+    private func logWarning(_ message: String) {
+        if isDebugMode {
+            let dateFormatter = DateFormatter()
+            dateFormatter.dateFormat = "HH:mm:ss.SSS"
+            let timestamp = dateFormatter.string(from: Date())
+            print("[\(timestamp)] ⚠️ WARNING: \(message)")
+        }
+    }
+    
+    private func logError(_ message: String) {
+        let dateFormatter = DateFormatter()
+        dateFormatter.dateFormat = "HH:mm:ss.SSS"
+        let timestamp = dateFormatter.string(from: Date())
+        print("[\(timestamp)] ❌ ERROR: \(message)")
+    }
+    
+    private func logCommand(_ command: String, arguments: [String]) {
+        if isDebugMode {
+            let fullCommand = ([command] + arguments).joined(separator: " ")
+            let dateFormatter = DateFormatter()
+            dateFormatter.dateFormat = "HH:mm:ss.SSS"
+            let timestamp = dateFormatter.string(from: Date())
+            print("[\(timestamp)] 🔄 COMMAND: \(fullCommand)")
+        }
+    }
+    
+    private func logCommandOutput(_ output: String) {
+        if isDebugMode {
+            let lines = output.split(separator: "\n")
+            for line in lines {
+                print("  └─ \(line)")
+            }
+        }
+    }
     
     // MARK: - Initialization
     
@@ -103,11 +150,15 @@ class SwapManager: ObservableObject {
     /// - Parameter destination: Where to move the swap file
     /// - Returns: Result indicating success or failure with error
     func moveSwapFile(to destination: DriveType) async -> Result<Void, SwapOperationError> {
+        logInfo("开始移动交换文件操作，目标位置: \(destination == .internalDrive ? "内部驱动器" : "外部驱动器")")
+        
         guard isSIPDisabled else {
+            logError("SIP未禁用，无法继续")
             return .failure(.sipEnabled)
         }
         
         if destination == .external && selectedExternalDrive == nil {
+            logError("未选择外部驱动器")
             return .failure(.externalDriveNotFound)
         }
         
@@ -118,32 +169,44 @@ class SwapManager: ObservableObject {
         
         // 1. 首先尝试获取管理员权限
         do {
+            logInfo("正在检查管理员权限...")
             let hasAdminPrivileges = try await checkAdminPrivileges()
             if !hasAdminPrivileges {
                 // 如果没有管理员权限，尝试获取
+                logInfo("需要获取管理员权限，正在请求...")
                 let gotPrivileges = try await requestAdminPrivileges()
                 if !gotPrivileges {
+                    logError("获取管理员权限失败")
                     await MainActor.run { isLoading = false }
                     return .failure(.insufficientPermissions)
                 }
+                logInfo("成功获取管理员权限")
+            } else {
+                logInfo("已有管理员权限")
             }
         } catch {
+            logError("权限检查过程中出错: \(error.localizedDescription)")
             await MainActor.run { isLoading = false }
             return .failure(.commandExecutionFailed("获取管理员权限失败: \(error.localizedDescription)"))
         }
         
         // 2. 停用交换文件
         do {
-            print("正在停用交换文件...")
+            logInfo("正在检查交换文件状态...")
             // 先检查当前的交换文件状态
             let swapStatus = try await executeCommandWithOutput("/usr/sbin/sysctl", arguments: ["vm.swap_enabled"], timeout: timeoutShort)
             let isSwapEnabled = swapStatus.contains("vm.swap_enabled: 1")
             
             if isSwapEnabled {
+                logInfo("交换文件当前已启用，正在停用...")
                 // 使用sudo获取权限停用交换文件
                 try await executeCommandWithAdmin("/usr/sbin/sysctl", arguments: ["-w", "vm.swap_enabled=0"])
+                logInfo("交换文件已成功停用")
+            } else {
+                logInfo("交换文件当前已停用，继续操作")
             }
         } catch {
+            logError("停用交换文件失败: \(error.localizedDescription)")
             await MainActor.run { isLoading = false }
             return .failure(.commandExecutionFailed("停用交换文件失败: \(error.localizedDescription)"))
         }
@@ -151,20 +214,24 @@ class SwapManager: ObservableObject {
         // 3. 移动或创建交换文件
         do {
             if destination == .internalDrive {
-                print("正在移动交换文件到内部驱动器...")
+                logInfo("准备将交换文件移回内部驱动器...")
                 try await moveToInternalDriveWithAdmin()
+                logInfo("交换文件已成功移回内部驱动器")
             } else {
                 guard let externalDrive = selectedExternalDrive else {
+                    logError("未找到选定的外部驱动器")
                     await MainActor.run { isLoading = false }
                     return .failure(.externalDriveNotFound)
                 }
                 
-                print("正在移动交换文件到外部驱动器: \(externalDrive.name)...")
+                logInfo("准备将交换文件移动到外部驱动器: \(externalDrive.name)...")
                 try await moveToExternalDriveWithAdmin(externalDrive)
+                logInfo("交换文件已成功移动到外部驱动器: \(externalDrive.name)")
             }
         } catch {
             // 出错时尝试重新启用交换文件
-            print("移动交换文件失败，正在恢复交换文件...")
+            logError("移动交换文件时出错: \(error.localizedDescription)")
+            logInfo("正在尝试恢复交换文件启用状态...")
             try? await executeCommandWithAdmin("/usr/sbin/sysctl", arguments: ["-w", "vm.swap_enabled=1"])
             await MainActor.run { isLoading = false }
             return .failure(.commandExecutionFailed("移动交换文件失败: \(error.localizedDescription)"))
@@ -172,18 +239,22 @@ class SwapManager: ObservableObject {
         
         // 4. 重新启用交换文件
         do {
-            print("正在重新启用交换文件...")
+            logInfo("正在重新启用交换文件...")
             try await executeCommandWithAdmin("/usr/sbin/sysctl", arguments: ["-w", "vm.swap_enabled=1"])
+            logInfo("交换文件已成功重新启用")
         } catch {
+            logError("重新启用交换文件失败: \(error.localizedDescription)")
             await MainActor.run { isLoading = false }
             return .failure(.commandExecutionFailed("重新启用交换文件失败: \(error.localizedDescription)"))
         }
         
         // 5. 更新当前位置状态
+        logInfo("操作完成，更新UI状态...")
         await MainActor.run {
             currentSwapLocation = destination
             isLoading = false
         }
+        logInfo("交换文件移动操作全部完成")
         return .success(())
     }
     
@@ -372,6 +443,8 @@ class SwapManager: ObservableObject {
     // MARK: - Private Methods - Command Execution
     
     private func executeCommand(_ command: String, arguments: [String]) async throws {
+        logCommand(command, arguments: arguments)
+        
         let process = Process()
         process.executableURL = URL(fileURLWithPath: command)
         process.arguments = arguments
@@ -382,16 +455,20 @@ class SwapManager: ObservableObject {
         process.standardError = errorPipe
         
         // Add timeout handling
-        try await withTaskTimeoutHandling(process: process, timeout: timeoutLong)
-        
-        if process.terminationStatus != 0 {
+        do {
+            try await withTaskTimeoutHandling(process: process, timeout: timeoutLong)
+            logInfo("命令执行成功: \(command)")
+        } catch {
             let errorData = errorPipe.fileHandleForReading.readDataToEndOfFile()
-            let errorOutput = String(data: errorData, encoding: .utf8) ?? "Unknown error"
+            let errorOutput = String(data: errorData, encoding: .utf8) ?? "未知错误"
+            logError("命令执行失败: \(command)\n错误信息: \(errorOutput)")
             throw SwapOperationError.commandExecutionFailed(errorOutput)
         }
     }
     
     private func executeCommandWithOutput(_ command: String, arguments: [String], timeout: UInt64) async throws -> String {
+        logCommand(command, arguments: arguments)
+        
         let process = Process()
         let pipe = Pipe()
         
@@ -399,13 +476,25 @@ class SwapManager: ObservableObject {
         process.arguments = arguments
         process.standardOutput = pipe
         
-        try await withTaskTimeoutHandling(process: process, timeout: timeout)
-        
-        let data = pipe.fileHandleForReading.readDataToEndOfFile()
-        return String(data: data, encoding: .utf8) ?? ""
+        do {
+            try await withTaskTimeoutHandling(process: process, timeout: timeout)
+            
+            let data = pipe.fileHandleForReading.readDataToEndOfFile()
+            let output = String(data: data, encoding: .utf8) ?? ""
+            
+            logInfo("命令执行成功: \(command)")
+            logCommandOutput(output)
+            
+            return output
+        } catch {
+            logError("命令执行失败: \(command)\n错误信息: \(error.localizedDescription)")
+            throw error
+        }
     }
     
     private func executeCommandWithPlist(_ command: String, arguments: [String], timeout: UInt64) async throws -> [String: Any] {
+        logCommand(command, arguments: arguments)
+        
         let process = Process()
         let pipe = Pipe()
         
@@ -413,17 +502,25 @@ class SwapManager: ObservableObject {
         process.arguments = arguments
         process.standardOutput = pipe
         
-        try await withTaskTimeoutHandling(process: process, timeout: timeout)
-        
-        let data = pipe.fileHandleForReading.readDataToEndOfFile()
-        
         do {
-            if let plist = try PropertyListSerialization.propertyList(from: data, options: [], format: nil) as? [String: Any] {
-                return plist
+            try await withTaskTimeoutHandling(process: process, timeout: timeout)
+            
+            let data = pipe.fileHandleForReading.readDataToEndOfFile()
+            
+            do {
+                if let plist = try PropertyListSerialization.propertyList(from: data, options: [], format: nil) as? [String: Any] {
+                    logInfo("命令执行成功并解析了Plist: \(command)")
+                    return plist
+                }
+                logWarning("命令执行成功但Plist解析失败: \(command)")
+                return [:]
+            } catch {
+                logError("Plist解析失败: \(error.localizedDescription)")
+                return [:]
             }
-            return [:]
         } catch {
-            return [:]
+            logError("命令执行失败: \(command)\n错误信息: \(error.localizedDescription)")
+            throw error
         }
     }
     
@@ -434,6 +531,7 @@ class SwapManager: ObservableObject {
                 process.waitUntilExit()
                 return true
             } catch {
+                logError("进程启动失败: \(error.localizedDescription)")
                 return false
             }
         }
@@ -442,11 +540,13 @@ class SwapManager: ObservableObject {
             do {
                 try await Task.sleep(nanoseconds: timeout)
                 if process.isRunning {
+                    logWarning("命令执行超时，正在终止进程")
                     process.terminate()
                     return false
                 }
                 return true
             } catch {
+                logError("超时处理失败: \(error.localizedDescription)")
                 return false
             }
         }
@@ -455,7 +555,8 @@ class SwapManager: ObservableObject {
         let executionSucceeded = try await executeTask.value
         
         if !success || !executionSucceeded {
-            throw SwapOperationError.commandExecutionFailed("Command timed out or failed to execute")
+            logError("命令执行失败: 超时或执行错误")
+            throw SwapOperationError.commandExecutionFailed("命令超时或执行失败")
         }
     }
     
@@ -463,24 +564,28 @@ class SwapManager: ObservableObject {
     
     /// 检查当前是否有管理员权限
     private func checkAdminPrivileges() async throws -> Bool {
+        logInfo("检查是否有管理员权限...")
         do {
             // 尝试访问一个需要管理员权限的命令
             let output = try await executeCommandWithOutput("/usr/bin/sudo", arguments: ["-n", "true"], timeout: timeoutShort)
+            logInfo("管理员权限检查成功")
             return true
         } catch {
-            // 如果命令失败，说明没有管理员权限
+            logInfo("当前没有管理员权限")
             return false
         }
     }
     
     /// 请求管理员权限
     private func requestAdminPrivileges() async throws -> Bool {
+        logInfo("正在请求管理员权限...")
         do {
             // 使用AppleScript显示管理员权限请求对话框
             let script = """
             do shell script "echo 'Admin privileges granted'" with administrator privileges
             """
             
+            logInfo("显示管理员权限请求对话框")
             let process = Process()
             process.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
             process.arguments = ["-e", script]
@@ -490,14 +595,24 @@ class SwapManager: ObservableObject {
             try process.run()
             process.waitUntilExit()
             
-            return process.terminationStatus == 0
+            let success = process.terminationStatus == 0
+            if success {
+                logInfo("用户授予了管理员权限")
+            } else {
+                logError("用户拒绝了管理员权限请求")
+            }
+            return success
         } catch {
+            logError("请求管理员权限过程中出错: \(error.localizedDescription)")
             return false
         }
     }
     
     /// 使用管理员权限执行命令
     private func executeCommandWithAdmin(_ command: String, arguments: [String]) async throws {
+        logCommand(command, arguments: arguments)
+        logInfo("以管理员权限执行命令")
+        
         let fullCommand = ([command] + arguments).joined(separator: " ")
         let sudoCommand = "do shell script \"\(fullCommand)\" with administrator privileges"
         
@@ -510,13 +625,25 @@ class SwapManager: ObservableObject {
         process.standardOutput = outputPipe
         process.standardError = errorPipe
         
-        try process.run()
-        process.waitUntilExit()
-        
-        if process.terminationStatus != 0 {
-            let errorData = errorPipe.fileHandleForReading.readDataToEndOfFile()
-            let errorOutput = String(data: errorData, encoding: .utf8) ?? "未知错误"
-            throw SwapOperationError.commandExecutionFailed(errorOutput)
+        do {
+            try process.run()
+            process.waitUntilExit()
+            
+            if process.terminationStatus != 0 {
+                let errorData = errorPipe.fileHandleForReading.readDataToEndOfFile()
+                let errorOutput = String(data: errorData, encoding: .utf8) ?? "未知错误"
+                logError("管理员权限命令执行失败: \(command)\n错误信息: \(errorOutput)")
+                throw SwapOperationError.commandExecutionFailed(errorOutput)
+            } else {
+                logInfo("管理员权限命令执行成功: \(command)")
+                let outputData = outputPipe.fileHandleForReading.readDataToEndOfFile()
+                if let output = String(data: outputData, encoding: .utf8), !output.isEmpty {
+                    logCommandOutput(output)
+                }
+            }
+        } catch {
+            logError("管理员权限命令执行过程中出错: \(error.localizedDescription)")
+            throw error
         }
     }
     
@@ -526,13 +653,19 @@ class SwapManager: ObservableObject {
     private func moveToInternalDriveWithAdmin() async throws {
         if currentSwapLocation == .external {
             // 1. 检查当前的符号链接
+            logInfo("检查当前交换文件符号链接...")
             let swapLinkInfo = try await executeCommandWithOutput("/usr/bin/ls", arguments: ["-la", swapFilePath], timeout: timeoutShort)
             
             // 2. 删除符号链接
+            logInfo("删除当前的符号链接...")
             try await executeCommandWithAdmin("/bin/rm", arguments: [swapFilePath])
             
             // 3. 重新创建默认交换文件
+            logInfo("在内部驱动器上重新创建交换文件...")
             try await executeCommandWithAdmin("/usr/sbin/dynamic_pager", arguments: ["-F", swapFilePath])
+            logInfo("内部驱动器交换文件创建完成")
+        } else {
+            logInfo("交换文件已在内部驱动器上，无需移动")
         }
     }
     
@@ -542,26 +675,34 @@ class SwapManager: ObservableObject {
         let targetSwapFile = "\(targetDirectory)/swapfile"
         
         // 1. 在外部驱动器上创建目录结构
+        logInfo("在外部驱动器上创建目录结构: \(targetDirectory)")
         try await executeCommandWithAdmin("/bin/mkdir", arguments: ["-p", targetDirectory])
         
         // 2. 检查外部驱动器上是否已有交换文件
+        logInfo("检查外部驱动器上是否已有交换文件...")
         let externalSwapExists = (try? await executeCommandWithOutput("/usr/bin/test", arguments: ["-f", targetSwapFile], timeout: timeoutShort)) != nil
         
         if externalSwapExists {
             // 如果已存在，先删除
+            logInfo("外部驱动器上已有交换文件，正在删除...")
             try await executeCommandWithAdmin("/bin/rm", arguments: [targetSwapFile])
         }
         
         // 3. 复制现有交换文件到外部驱动器
+        logInfo("复制交换文件到外部驱动器: \(targetSwapFile)")
         try await executeCommandWithAdmin("/bin/cp", arguments: [swapFilePath, targetSwapFile])
         
         // 4. 设置适当的权限
+        logInfo("设置交换文件权限...")
         try await executeCommandWithAdmin("/bin/chmod", arguments: ["644", targetSwapFile])
         
         // 5. 删除原始交换文件
+        logInfo("删除内部驱动器上的原始交换文件...")
         try await executeCommandWithAdmin("/bin/rm", arguments: [swapFilePath])
         
         // 6. 创建符号链接
+        logInfo("创建符号链接，将原路径指向外部交换文件...")
         try await executeCommandWithAdmin("/bin/ln", arguments: ["-s", targetSwapFile, swapFilePath])
+        logInfo("符号链接创建完成")
     }
 } 
