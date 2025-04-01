@@ -15,7 +15,7 @@ struct MacSwapMoverApp: App {
     var body: some Scene {
         WindowGroup {
             ContentView()
-                .frame(minWidth: 680, minHeight: 620)
+                .frame(minWidth: 680, minHeight: 620, maxHeight: .infinity)
                 // 使用固定最小尺寸，但允许自动调整大小
                 .background(SizeReporterView())
         }
@@ -69,15 +69,8 @@ struct SizeReporterView: NSViewRepresentable {
                 height: max(contentSize.height, 620)
             )
             
-            // 限制最大高度，避免窗口过大
-            let maxHeight: CGFloat = 900
-            let finalHeight = min(newSize.height, maxHeight)
-            let finalSize = NSSize(width: newSize.width, height: finalHeight)
-            
-            // 仅当尺寸有实质性变化时才调整
-            if abs(window.frame.size.height - finalSize.height) > 20 {
-                window.setContentSize(finalSize)
-            }
+            // 不再强制限制最大高度，而是让窗口自由调整
+            window.setContentSize(newSize)
         }
     }
     
@@ -116,10 +109,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             window.styleMask.insert(.resizable)
             window.contentMinSize = NSSize(width: 720, height: 620)
             
-            // 启用自动调整大小以适应内容
-            let initialHeight: CGFloat = 750 // 设置更合适的初始高度
+            // 启用自由调整大小以适应用户操作和内容
+            let initialHeight: CGFloat = 750 // 设置初始高度
             window.setContentSize(NSSize(width: 720, height: initialHeight))
-            window.contentAspectRatio = NSSize(width: 720, height: 0) // 固定宽度，高度自由
+            
+            // 重要：移除固定宽高比限制，允许自由调整
+            window.contentAspectRatio = NSSize(width: 0, height: 0)
             
             // 设置窗口显示在屏幕中央
             window.center()
@@ -127,7 +122,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             // 为内容视图添加自动布局约束
             if let contentView = window.contentView {
                 contentView.translatesAutoresizingMaskIntoConstraints = false
-                window.contentAspectRatio = NSSize(width: 0, height: 0) // 关闭宽高比约束
             }
             
             // 延迟一小段时间后再次调整大小，确保所有内容都已加载

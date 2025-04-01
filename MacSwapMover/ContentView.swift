@@ -61,22 +61,25 @@ struct ContentView: View {
         .transition(.opacity)
     }
     
+    // MARK: - 默认间距常量
+    private let defaultSpacing: CGFloat = 24
+    private let defaultPadding: CGFloat = 20
+    
     var body: some View {
-        ZStack {
-            // 背景
-            Color(.windowBackgroundColor).edgesIgnoringSafeArea(.all)
-            
-            VStack(spacing: 0) {
-                // 头部区域
-                header
-                
-                // 主要内容区域
-                contentArea
+        GeometryReader { geometry in
+            ScrollView {
+                VStack(spacing: 0) {
+                    // 头部区域
+                    header
+                    
+                    // 主要内容区域
+                    contentArea
+                }
+                .frame(minWidth: geometry.size.width, minHeight: geometry.size.height)
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .frame(minWidth: geometry.size.width, minHeight: geometry.size.height)
+            .background(Color(.windowBackgroundColor))
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .fixedSize(horizontal: false, vertical: true) // 允许垂直方向自动调整大小
         .onAppear {
             isInitializing = true
             isLoading = true
@@ -171,8 +174,8 @@ struct ContentView: View {
                     .padding(.top, 2)
                 }
             }
-            .padding(.horizontal, 24)
-            .padding(.top, 20)
+            .padding(.horizontal, defaultPadding + 4)
+            .padding(.top, defaultPadding)
             .padding(.bottom, 16)
             
             // 分隔线 - 使用渐变色实现更自然的过渡
@@ -190,11 +193,10 @@ struct ContentView: View {
             Color(.windowBackgroundColor)
                 .shadow(color: Color.black.opacity(0.1), radius: 4, x: 0, y: 4)
         )
-        .fixedSize(horizontal: false, vertical: true) // 确保头部高度适应内容
     }
     
     private var contentArea: some View {
-        VStack(spacing: 24) {
+        VStack(spacing: defaultSpacing) {
             // 状态显示区域
             statusSection
             
@@ -206,13 +208,14 @@ struct ContentView: View {
                 CommandLogView(swapManager: swapManager)
                     .transition(.opacity.combined(with: .move(edge: .bottom)))
                     .animation(.easeInOut, value: !swapManager.commandLogs.isEmpty)
-                    .fixedSize(horizontal: false, vertical: true) // 确保高度适应内容
             }
+            
+            // 底部填充，确保内容有足够空间
+            Spacer().frame(height: defaultPadding)
         }
-        .padding(.horizontal, 24)
+        .padding(.horizontal, defaultPadding + 4)
         .padding(.top, 12)
-        .padding(.bottom, 24)
-        .fixedSize(horizontal: false, vertical: true) // 允许垂直方向自动调整大小
+        .padding(.bottom, defaultPadding)
     }
     
     private var statusSection: some View {
@@ -267,7 +270,6 @@ struct ContentView: View {
                 .animation(.easeInOut, value: swapManager.lastError != nil)
             }
         }
-        .fixedSize(horizontal: false, vertical: true) // 确保高度适应内容
     }
     
     private var actionSection: some View {
