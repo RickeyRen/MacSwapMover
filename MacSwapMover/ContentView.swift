@@ -87,6 +87,13 @@ struct ContentView: View {
                     
                     // Action section
                     actionSection
+                    
+                    // 命令日志视图
+                    if !swapManager.commandLogs.isEmpty {
+                        CommandLogView(swapManager: swapManager)
+                            .transition(.move(edge: .bottom).combined(with: .opacity))
+                            .animation(.easeInOut(duration: 0.3), value: !swapManager.commandLogs.isEmpty)
+                    }
                 }
                 .padding(.horizontal, 24)
                 .padding(.top, 12)

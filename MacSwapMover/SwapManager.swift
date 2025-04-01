@@ -52,6 +52,7 @@ class SwapManager: ObservableObject {
     @Published var lastError: String?
     @Published var availableExternalDrives: [ExternalDrive] = []
     @Published var selectedExternalDrive: ExternalDrive?
+    @Published var commandLogs: [CommandLog] = [] // 存储命令日志
     
     // MARK: - Private Properties
     
@@ -69,6 +70,10 @@ class SwapManager: ObservableObject {
             dateFormatter.dateFormat = "HH:mm:ss.SSS"
             let timestamp = dateFormatter.string(from: Date())
             print("[\(timestamp)] ℹ️ INFO: \(message)")
+            
+            DispatchQueue.main.async {
+                self.commandLogs.append(CommandLog(type: .info, message: message, timestamp: Date()))
+            }
         }
     }
     
@@ -78,6 +83,10 @@ class SwapManager: ObservableObject {
             dateFormatter.dateFormat = "HH:mm:ss.SSS"
             let timestamp = dateFormatter.string(from: Date())
             print("[\(timestamp)] ⚠️ WARNING: \(message)")
+            
+            DispatchQueue.main.async {
+                self.commandLogs.append(CommandLog(type: .warning, message: message, timestamp: Date()))
+            }
         }
     }
     
@@ -86,6 +95,10 @@ class SwapManager: ObservableObject {
         dateFormatter.dateFormat = "HH:mm:ss.SSS"
         let timestamp = dateFormatter.string(from: Date())
         print("[\(timestamp)] ❌ ERROR: \(message)")
+        
+        DispatchQueue.main.async {
+            self.commandLogs.append(CommandLog(type: .error, message: message, timestamp: Date()))
+        }
     }
     
     private func logCommand(_ command: String, arguments: [String]) {
@@ -95,6 +108,10 @@ class SwapManager: ObservableObject {
             dateFormatter.dateFormat = "HH:mm:ss.SSS"
             let timestamp = dateFormatter.string(from: Date())
             print("[\(timestamp)] 🔄 COMMAND: \(fullCommand)")
+            
+            DispatchQueue.main.async {
+                self.commandLogs.append(CommandLog(type: .command, message: fullCommand, timestamp: Date()))
+            }
         }
     }
     
@@ -104,6 +121,19 @@ class SwapManager: ObservableObject {
             for line in lines {
                 print("  └─ \(line)")
             }
+            
+            if !output.isEmpty {
+                DispatchQueue.main.async {
+                    self.commandLogs.append(CommandLog(type: .output, message: output, timestamp: Date()))
+                }
+            }
+        }
+    }
+    
+    // 清除日志
+    func clearLogs() {
+        DispatchQueue.main.async {
+            self.commandLogs.removeAll()
         }
     }
     
