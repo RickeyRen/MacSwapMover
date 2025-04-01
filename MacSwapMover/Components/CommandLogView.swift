@@ -42,7 +42,7 @@ struct CommandLogView: View {
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 12)
-        .background(Color(.windowBackgroundColor).opacity(0.9))
+        .background(Color(NSColor.windowBackgroundColor).opacity(0.9))
         .clipShape(RoundedRectangle(cornerRadius: 12))
         .shadow(color: Color.black.opacity(0.1), radius: 8, x: 0, y: 4)
     }
@@ -52,12 +52,12 @@ struct CommandLogView: View {
         ScrollViewReader { proxy in
             ScrollView {
                 logContentView
-                    .onChange(of: swapManager.commandLogs) { logs in
-                        scrollToBottom(proxy: proxy, logs: logs)
-                    }
+            }
+            .onChange(of: swapManager.commandLogs.count) { _ in
+                scrollToBottom(proxy: proxy)
             }
             .frame(height: showFullLog ? 300 : 150)
-            .background(Color(.systemBackground).opacity(0.8))
+            .background(Color(NSColor.textBackgroundColor).opacity(0.8))
             .clipShape(RoundedRectangle(cornerRadius: 8))
             .overlay(
                 RoundedRectangle(cornerRadius: 8)
@@ -80,10 +80,10 @@ struct CommandLogView: View {
     }
     
     // 滚动到底部的函数
-    private func scrollToBottom(proxy: ScrollViewProxy, logs: [CommandLog]) {
-        if !logs.isEmpty {
+    private func scrollToBottom(proxy: ScrollViewProxy) {
+        if !swapManager.commandLogs.isEmpty {
             withAnimation {
-                proxy.scrollTo(logs.count - 1, anchor: .bottom)
+                proxy.scrollTo(swapManager.commandLogs.count - 1, anchor: .bottom)
             }
         }
     }

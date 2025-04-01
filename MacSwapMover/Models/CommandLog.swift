@@ -2,7 +2,7 @@ import Foundation
 import SwiftUI
 
 // 命令日志的类型
-enum CommandLogType {
+enum CommandLogType: String {
     case info
     case warning
     case error
@@ -13,15 +13,15 @@ enum CommandLogType {
     var iconName: String {
         switch self {
         case .info:
-            return "info.circle.fill"
+            return "info.circle"
         case .warning:
-            return "exclamationmark.triangle.fill"
+            return "exclamationmark.triangle"
         case .error:
-            return "xmark.circle.fill"
+            return "xmark.circle"
         case .command:
-            return "terminal.fill"
+            return "terminal"
         case .output:
-            return "text.alignleft"
+            return "text.append"
         }
     }
     
@@ -43,7 +43,7 @@ enum CommandLogType {
 }
 
 // 命令日志结构
-struct CommandLog: Identifiable {
+struct CommandLog: Identifiable, Equatable {
     let id = UUID()
     let type: CommandLogType
     let message: String
@@ -53,5 +53,13 @@ struct CommandLog: Identifiable {
         let formatter = DateFormatter()
         formatter.dateFormat = "HH:mm:ss.SSS"
         return formatter.string(from: timestamp)
+    }
+    
+    // 添加 Equatable 协议实现
+    static func == (lhs: CommandLog, rhs: CommandLog) -> Bool {
+        return lhs.id == rhs.id && 
+               lhs.type == rhs.type && 
+               lhs.message == rhs.message && 
+               lhs.timestamp == rhs.timestamp
     }
 } 
