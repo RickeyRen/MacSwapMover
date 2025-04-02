@@ -12,12 +12,12 @@ struct DriveSelectionView: View {
     
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Select External Drive")
+            Text("选择驱动器")
                 .font(.headline)
                 .foregroundColor(.primary)
             
-            if swapManager.availableExternalDrives.isEmpty {
-                Text("No external drives detected")
+            if swapManager.availableDrives.isEmpty {
+                Text("未检测到可用驱动器")
                     .foregroundColor(.secondary)
                     .padding()
                     .frame(maxWidth: .infinity, alignment: .center)
@@ -26,12 +26,12 @@ struct DriveSelectionView: View {
             } else {
                 ScrollView {
                     VStack(spacing: 10) {
-                        ForEach(swapManager.availableExternalDrives) { drive in
+                        ForEach(swapManager.availableDrives) { drive in
                             DriveItemView(
                                 drive: drive,
-                                isSelected: swapManager.selectedExternalDrive?.id == drive.id,
+                                isSelected: swapManager.selectedDrive?.id == drive.id,
                                 onSelect: {
-                                    swapManager.selectedExternalDrive = drive
+                                    swapManager.selectedDrive = drive
                                 }
                             )
                         }
@@ -41,9 +41,9 @@ struct DriveSelectionView: View {
             }
             
             Button(action: {
-                swapManager.findAvailableExternalDrives()
+                swapManager.findAvailableDrives()
             }) {
-                Label("Refresh Drives", systemImage: "arrow.clockwise")
+                Label("刷新驱动器列表", systemImage: "arrow.clockwise")
                     .font(.system(size: 13))
             }
             .buttonStyle(.link)
@@ -57,29 +57,41 @@ struct DriveSelectionView: View {
 }
 
 struct DriveItemView: View {
-    let drive: ExternalDrive
+    let drive: DriveInfo
     let isSelected: Bool
     let onSelect: () -> Void
     
     var body: some View {
         Button(action: onSelect) {
             HStack {
-                Image(systemName: "externaldrive.badge.icloud")
+                Image(systemName: drive.isSystemDrive ? "desktopcomputer" : "externaldrive.fill")
                     .font(.system(size: 24))
-                    .foregroundColor(.blue)
+                    .foregroundColor(drive.containsSwapFile ? .green : .blue)
                     .frame(width: 40, height: 40)
                 
                 VStack(alignment: .leading, spacing: 4) {
-                    Text(drive.name)
-                        .font(.system(size: 14, weight: .semibold))
-                        .foregroundColor(.primary)
+                    HStack {
+                        Text(drive.name)
+                            .font(.system(size: 14, weight: .semibold))
+                            .foregroundColor(.primary)
+                        
+                        if drive.containsSwapFile {
+                            Text("当前位置")
+                                .font(.caption2)
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 2)
+                                .background(Color.green.opacity(0.2))
+                                .cornerRadius(4)
+                                .foregroundColor(.green)
+                        }
+                    }
                     
                     HStack {
-                        Text("Size: \(drive.size)")
+                        Text("\(drive.availableSpace) 可用")
                             .font(.system(size: 12))
                             .foregroundColor(.secondary)
                         
-                        Text("Available: \(drive.availableSpace)")
+                        Text("/ \(drive.size) 总容量")
                             .font(.system(size: 12))
                             .foregroundColor(.secondary)
                     }
@@ -101,7 +113,11 @@ struct DriveItemView: View {
         .buttonStyle(PlainButtonStyle())
         .overlay(
             RoundedRectangle(cornerRadius: 8)
-                .stroke(isSelected ? Color.blue : Color.gray.opacity(0.3), lineWidth: isSelected ? 2 : 1)
+                .stroke(
+                    drive.containsSwapFile ? Color.green.opacity(0.5) :
+                    isSelected ? Color.blue : Color.gray.opacity(0.3),
+                    lineWidth: isSelected || drive.containsSwapFile ? 2 : 1
+                )
         )
     }
 }
@@ -110,12 +126,12 @@ struct DriveItemView: View {
     let swapManager = SwapManager()
     
     // Add mock data for preview
-    swapManager.availableExternalDrives = [
-        ExternalDrive(name: "External SSD", path: "/Volumes/External", size: "500 GB", availableSpace: "300 GB"),
-        ExternalDrive(name: "Backup Drive", path: "/Volumes/Backup", size: "2 TB", availableSpace: "1.5 TB")
+    swapManager.availableDrives = [
+        DriveInfo(name: "External SSD", path: "/Volumes/External", size: "500 GB", availableSpace: "300 GB", isSystemDrive: false),
+        DriveInfo(name: "Backup Drive", path: "/Volumes/Backup", size: "2 TB", availableSpace: "1.5 TB", isSystemDrive: false)
     ]
     
-    return DriveSelectionView(swapManager: swapManager)
+    DriveSelectionView(swapManager: swapManager)
         .frame(width: 400)
         .padding()
 } 

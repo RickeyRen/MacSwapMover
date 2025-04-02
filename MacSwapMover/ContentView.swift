@@ -94,7 +94,7 @@ struct ContentView: View {
                     }
                     
                     group.addTask {
-                        await swapManager.findAvailableExternalDrivesAsync()
+                        await swapManager.findAvailableDrivesAsync()
                     }
                 }
                 
@@ -771,7 +771,7 @@ struct ContentView: View {
             return
         }
         
-        if destination == .external && swapManager.selectedExternalDrive == nil {
+        if destination == .external && swapManager.selectedDrive == nil {
             errorMessage = "Please select an external drive first."
             showErrorAlert = true
             return
