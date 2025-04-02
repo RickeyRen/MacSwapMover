@@ -11,8 +11,21 @@ import Foundation
 
 /// Represents the type of drive where swap file is located
 enum DriveType {
-    case internalDrive
-    case external
+    case systemDrive
+    case otherDrive
+}
+
+/// Drive information structure
+struct DriveInfo: Identifiable {
+    let id = UUID()
+    let name: String
+    let path: String
+    let size: String
+    let availableSpace: String
+    let isSystemDrive: Bool
+    
+    // Current swap location indicator
+    var containsSwapFile: Bool = false
 }
 
 /// Errors that can occur during swap operations
@@ -20,7 +33,7 @@ enum SwapOperationError: Error {
     case sipEnabled
     case insufficientPermissions
     case commandExecutionFailed(String)
-    case externalDriveNotFound
+    case driveNotFound
     case noSwapFile
     case unknownError
     
@@ -32,8 +45,8 @@ enum SwapOperationError: Error {
             return "没有足够的权限修改系统文件。"
         case .commandExecutionFailed(let message):
             return "命令执行失败：\(message)"
-        case .externalDriveNotFound:
-            return "没有选择或没有可用的外部驱动器。"
+        case .driveNotFound:
+            return "未找到选择的驱动器。"
         case .noSwapFile:
             return "在预期位置找不到交换文件。"
         case .unknownError:
@@ -47,20 +60,22 @@ class SwapManager: ObservableObject {
     // MARK: - Published Properties
     
     @Published var isSIPDisabled = false
-    @Published var currentSwapLocation: DriveType = .internalDrive
+    @Published var currentSwapDrive: DriveInfo?
     @Published var isLoading = false
     @Published var lastError: String?
-    @Published var availableExternalDrives: [ExternalDrive] = []
-    @Published var selectedExternalDrive: ExternalDrive?
+    @Published var availableDrives: [DriveInfo] = []
+    @Published var selectedDrive: DriveInfo?
     @Published var commandLogs: [CommandLog] = [] // 存储命令日志
     
     // MARK: - Private Properties
     
     private let swapFilePath = "/private/var/vm/swapfile"
+    private let systemSwapPath = "/var/vm/swapfile"
     private let timeoutShort: UInt64 = 3_000_000_000 // 3 seconds
     private let timeoutMedium: UInt64 = 5_000_000_000 // 5 seconds
     private let timeoutLong: UInt64 = 15_000_000_000 // 15 seconds
     private let isDebugMode = true // 开启调试模式
+    private var rootVolumeURL: URL? // 系统根卷的URL
     
     // MARK: - 日志功能
     
@@ -140,10 +155,19 @@ class SwapManager: ObservableObject {
     // MARK: - Initialization
     
     init() {
-        // 自动在应用启动时检查 SIP 状态
         Task {
+            // 初始化根卷URL
+            rootVolumeURL = getSystemRootURL()
+            
+            // 自动在应用启动时检查 SIP 状态
             await checkSIPStatusAsync()
         }
+    }
+    
+    // 获取系统根卷URL
+    private func getSystemRootURL() -> URL? {
+        // macOS通常使用"/"作为根卷路径
+        return URL(fileURLWithPath: "/")
     }
     
     // MARK: - Public Methods
@@ -162,10 +186,10 @@ class SwapManager: ObservableObject {
         }
     }
     
-    /// Find available external drives
-    func findAvailableExternalDrives() {
+    /// Find available drives
+    func findAvailableDrives() {
         Task {
-            await findAvailableExternalDrivesAsync()
+            await findAvailableDrivesAsync()
         }
     }
     
@@ -176,20 +200,21 @@ class SwapManager: ObservableObject {
         }
     }
     
-    /// Move swap file to specified destination with admin privileges
-    /// - Parameter destination: Where to move the swap file
+    /// Move swap file to specified destination drive
+    /// - Parameter destinationDrive: Drive to move the swap file to
     /// - Returns: Result indicating success or failure with error
-    func moveSwapFile(to destination: DriveType) async -> Result<Void, SwapOperationError> {
-        logInfo("开始移动交换文件操作，目标位置: \(destination == .internalDrive ? "内部驱动器" : "外部驱动器")")
+    func moveSwapFile(to destinationDrive: DriveInfo) async -> Result<Void, SwapOperationError> {
+        logInfo("开始移动交换文件操作，目标位置: \(destinationDrive.name)")
         
         guard isSIPDisabled else {
             logError("SIP未禁用，无法继续")
             return .failure(.sipEnabled)
         }
         
-        if destination == .external && selectedExternalDrive == nil {
-            logError("未选择外部驱动器")
-            return .failure(.externalDriveNotFound)
+        // 确保目标驱动器有效
+        if availableDrives.first(where: { $0.id == destinationDrive.id }) == nil {
+            logError("未找到选定的驱动器: \(destinationDrive.name)")
+            return .failure(.driveNotFound)
         }
         
         // 更新UI状态
@@ -241,22 +266,22 @@ class SwapManager: ObservableObject {
             return .failure(.commandExecutionFailed("停用交换文件失败: \(error.localizedDescription)"))
         }
         
-        // 3. 移动或创建交换文件
+        // 3. 移动交换文件
         do {
-            if destination == .internalDrive {
-                logInfo("准备将交换文件移回内部驱动器...")
-                try await moveToInternalDriveWithAdmin()
-                logInfo("交换文件已成功移回内部驱动器")
-            } else {
-                guard let externalDrive = selectedExternalDrive else {
-                    logError("未找到选定的外部驱动器")
-                    await MainActor.run { isLoading = false }
-                    return .failure(.externalDriveNotFound)
+            if let currentSwap = currentSwapDrive {
+                // 如果目标驱动器就是当前驱动器，则不需要移动
+                if currentSwap.id == destinationDrive.id {
+                    logInfo("交换文件已经在目标驱动器上: \(destinationDrive.name)")
+                } else {
+                    logInfo("准备将交换文件从 \(currentSwap.name) 移动到 \(destinationDrive.name)...")
+                    try await moveSwapFileBetweenDrivesWithAdmin(from: currentSwap, to: destinationDrive)
+                    logInfo("交换文件已成功移动到: \(destinationDrive.name)")
                 }
-                
-                logInfo("准备将交换文件移动到外部驱动器: \(externalDrive.name)...")
-                try await moveToExternalDriveWithAdmin(externalDrive)
-                logInfo("交换文件已成功移动到外部驱动器: \(externalDrive.name)")
+            } else {
+                // 如果无法检测当前交换文件位置，则创建一个新的在目标驱动器上
+                logInfo("无法检测当前交换文件位置，在目标驱动器上创建新文件: \(destinationDrive.name)...")
+                try await createSwapFileOnDriveWithAdmin(destinationDrive)
+                logInfo("交换文件已成功创建在: \(destinationDrive.name)")
             }
         } catch {
             // 出错时尝试重新启用交换文件
@@ -278,10 +303,12 @@ class SwapManager: ObservableObject {
             return .failure(.commandExecutionFailed("重新启用交换文件失败: \(error.localizedDescription)"))
         }
         
-        // 5. 更新当前位置状态
+        // 5. 更新当前位置状态和刷新驱动器列表
         logInfo("操作完成，更新UI状态...")
+        await detectSwapLocationAsync()
+        await findAvailableDrivesAsync()
+        
         await MainActor.run {
-            currentSwapLocation = destination
             isLoading = false
         }
         logInfo("交换文件移动操作全部完成")
@@ -312,7 +339,7 @@ class SwapManager: ObservableObject {
             }
             
             group.addTask {
-                await self.findAvailableExternalDrivesAsync()
+                await self.findAvailableDrivesAsync()
             }
         }
     }
@@ -345,12 +372,12 @@ class SwapManager: ObservableObject {
         do {
             let output = try await executeCommandWithOutput("/usr/bin/csrutil", arguments: ["status"], timeout: timeoutMedium)
             
-            print("SIP 检查输出: \(output)")
+            logInfo("SIP 检查输出: \(output)")
             
             await MainActor.run {
                 isSIPDisabled = output.lowercased().contains("disabled")
                 isLoading = false
-                print("SIP 状态更新为: \(isSIPDisabled ? "已禁用" : "已启用")")
+                logInfo("SIP 状态更新为: \(isSIPDisabled ? "已禁用" : "已启用")")
             }
         } catch {
             await MainActor.run {
@@ -360,17 +387,22 @@ class SwapManager: ObservableObject {
         }
     }
     
-    func findAvailableExternalDrivesAsync() async {
+    func findAvailableDrivesAsync() async {
         await MainActor.run {
             isLoading = true
-            availableExternalDrives = []
+            availableDrives = []
         }
         
         do {
             let fileManager = FileManager.default
             let volumesURL = URL(fileURLWithPath: "/Volumes")
             
-            var drives: [ExternalDrive] = []
+            var drives: [DriveInfo] = []
+            
+            // 添加系统驱动器
+            if let systemDrive = await extractSystemDriveInfo() {
+                drives.append(systemDrive)
+            }
             
             // Try to list volume directories, return early if failed
             let volumes: [URL]
@@ -386,29 +418,69 @@ class SwapManager: ObservableObject {
             
             for volume in volumes {
                 if let drive = await extractDriveInfo(from: volume) {
-                    // 只添加如果它不是启动卷并且是物理硬盘
-                    let isBootVolume = await checkIsBootVolumeAsync(path: volume.path)
-                    let isPhysicalDrive = await isPhysicalExternalDriveAsync(path: volume.path)
-                    
-                    if !isBootVolume && isPhysicalDrive {
+                    // 检查是否是系统驱动器，避免重复
+                    if !drives.contains(where: { $0.path == drive.path }) {
                         drives.append(drive)
                     }
                 }
             }
             
+            // 标记当前交换文件所在的驱动器
+            await markCurrentSwapDrive(in: &drives)
+            
             await MainActor.run {
-                availableExternalDrives = drives
+                availableDrives = drives
+                
+                // 设置当前交换文件所在驱动器
+                currentSwapDrive = drives.first(where: { $0.containsSwapFile })
+                
                 isLoading = false
             }
         } catch {
             await MainActor.run {
-                lastError = "查找外部驱动器失败: \(error.localizedDescription)"
+                lastError = "查找可用驱动器失败: \(error.localizedDescription)"
                 isLoading = false
             }
         }
     }
     
-    private func extractDriveInfo(from volume: URL) async -> ExternalDrive? {
+    /// 提取系统驱动器信息
+    private func extractSystemDriveInfo() async -> DriveInfo? {
+        guard let rootURL = rootVolumeURL else { return nil }
+        
+        do {
+            let resourceValues = try rootURL.resourceValues(forKeys: [.volumeNameKey, .volumeTotalCapacityKey, .volumeAvailableCapacityKey])
+            
+            guard let totalCapacity = resourceValues.volumeTotalCapacity,
+                  let availableCapacity = resourceValues.volumeAvailableCapacity else {
+                return nil
+            }
+            
+            // 格式化大小为GB
+            let totalGB = String(format: "%.1f GB", Double(totalCapacity) / 1_000_000_000)
+            let availableGB = String(format: "%.1f GB", Double(availableCapacity) / 1_000_000_000)
+            
+            // 使用主机名作为驱动器名称，或使用默认名称
+            var systemName = "System Drive"
+            if let hostName = try? executeCommandWithOutput("/bin/hostname", arguments: [], timeout: timeoutShort).trimmingCharacters(in: .whitespacesAndNewlines) {
+                systemName = "\(hostName) (System)"
+            }
+            
+            return DriveInfo(
+                name: systemName,
+                path: rootURL.path,
+                size: totalGB,
+                availableSpace: availableGB,
+                isSystemDrive: true
+            )
+        } catch {
+            logError("提取系统驱动器信息失败: \(error.localizedDescription)")
+            return nil
+        }
+    }
+    
+    /// 从卷URL提取驱动器信息
+    private func extractDriveInfo(from volume: URL) async -> DriveInfo? {
         do {
             let resourceValues = try volume.resourceValues(forKeys: [.volumeNameKey, .volumeTotalCapacityKey, .volumeAvailableCapacityKey])
             
@@ -418,137 +490,71 @@ class SwapManager: ObservableObject {
                 return nil
             }
             
-            // Format sizes in GB
+            // 格式化大小为GB
             let totalGB = String(format: "%.1f GB", Double(totalCapacity) / 1_000_000_000)
             let availableGB = String(format: "%.1f GB", Double(availableCapacity) / 1_000_000_000)
             
-            return ExternalDrive(
+            // 确定是否为系统驱动器
+            let isSystemDrive = volume.path == rootVolumeURL?.path || 
+                               name.contains("Macintosh HD") ||
+                               volume.path.hasPrefix("/System")
+            
+            return DriveInfo(
                 name: name,
                 path: volume.path,
                 size: totalGB,
-                availableSpace: availableGB
+                availableSpace: availableGB,
+                isSystemDrive: isSystemDrive
             )
         } catch {
             return nil
         }
     }
     
-    private func checkIsBootVolumeAsync(path: String) async -> Bool {
+    /// 标记当前交换文件所在的驱动器
+    private func markCurrentSwapDrive(in drives: inout [DriveInfo]) async {
         do {
-            let output = try await executeCommandWithPlist("/usr/sbin/diskutil", arguments: ["info", "-plist", path], timeout: timeoutShort)
+            let output = try await executeCommandWithOutput("/usr/bin/ls", arguments: ["-la", swapFilePath], timeout: timeoutShort)
+            logInfo("交换文件链接检查结果: \(output)")
             
-            if let volumeInfo = output["VolumeInfo"] as? [String: Any],
-               let bootable = volumeInfo["BootFromThisVolume"] as? Bool {
-                return bootable
+            // 如果包含 -> 符号，说明是符号链接
+            if output.contains("->") {
+                if let targetPath = output.components(separatedBy: "->").last?.trimmingCharacters(in: .whitespacesAndNewlines) {
+                    // 获取目标路径所在的驱动器
+                    let targetURL = URL(fileURLWithPath: targetPath)
+                    let targetDrivePath = targetURL.pathComponents.prefix(2).joined(separator: "/")
+                    
+                    logInfo("交换文件指向: \(targetPath)")
+                    logInfo("交换文件所在驱动器路径: \(targetDrivePath)")
+                    
+                    // 更新驱动器列表，标记含有交换文件的驱动器
+                    for i in 0..<drives.count {
+                        if targetPath.hasPrefix(drives[i].path) {
+                            drives[i].containsSwapFile = true
+                            logInfo("标记驱动器 \(drives[i].name) 为当前交换文件位置")
+                        } else {
+                            drives[i].containsSwapFile = false
+                        }
+                    }
+                }
+            } else {
+                // 如果不是符号链接，说明在系统驱动器上
+                for i in 0..<drives.count {
+                    if drives[i].isSystemDrive {
+                        drives[i].containsSwapFile = true
+                        logInfo("标记系统驱动器 \(drives[i].name) 为当前交换文件位置")
+                    } else {
+                        drives[i].containsSwapFile = false
+                    }
+                }
             }
-            return false
         } catch {
-            return false
-        }
-    }
-    
-    /// 检查是否为物理外部硬盘而不是网络驱动器或虚拟卷
-    private func isPhysicalExternalDriveAsync(path: String) async -> Bool {
-        do {
-            logInfo("检查驱动器类型: \(path)")
-            // 使用diskutil获取驱动器详细信息
-            let output = try await executeCommandWithPlist("/usr/sbin/diskutil", arguments: ["info", "-plist", path], timeout: timeoutShort)
+            logError("检查交换文件位置失败: \(error.localizedDescription)")
             
-            // 检查是否为启动卷，启动卷通常不适合存放交换文件
-            if let volumeInfo = output["VolumeInfo"] as? [String: Any],
-               let bootable = volumeInfo["BootFromThisVolume"] as? Bool,
-               bootable {
-                logInfo("排除启动卷: \(path)")
-                return false
+            // 如果无法确定，默认标记系统驱动器
+            for i in 0..<drives.count {
+                drives[i].containsSwapFile = drives[i].isSystemDrive
             }
-            
-            // 检查设备类型
-            if let deviceType = output["DeviceNode"] as? String {
-                // 物理设备通常具有/dev/disk开头的设备节点
-                let isPhysical = deviceType.hasPrefix("/dev/disk")
-                
-                // 进一步检查是否为外部物理设备
-                if isPhysical {
-                    // 检查是否为外部设备
-                    if let isExternal = output["External"] as? Bool {
-                        if isExternal {
-                            logInfo("确认为外部物理驱动器: \(path) (External = true)")
-                            return true
-                        }
-                    }
-                    
-                    // 检查是否为可移动媒体
-                    if let isRemovable = output["RemovableMedia"] as? Bool {
-                        if isRemovable {
-                            logInfo("确认为可移动物理驱动器: \(path) (RemovableMedia = true)")
-                            return true
-                        }
-                    }
-                    
-                    // 检查协议类型
-                    if let deviceProtocol = output["Protocol"] as? String {
-                        // 常见的外部物理设备协议
-                        let externalProtocols = ["USB", "Thunderbolt", "SATA", "SAS", "FireWire", "External"]
-                        let isExternalByProtocol = externalProtocols.contains { deviceProtocol.contains($0) }
-                        
-                        if isExternalByProtocol {
-                            logInfo("确认为外部物理驱动器: \(path) (Protocol = \(deviceProtocol))")
-                            return true
-                        }
-                    }
-                }
-                
-                // 排除常见的非物理驱动器类型
-                if let volumeType = output["FilesystemType"] as? String {
-                    // 文件系统类型不应该包括apfs，因为macOS的外部硬盘通常也是APFS格式
-                    let nonPhysicalTypes = ["autofs", "nfs", "cifs", "smbfs", "afpfs", "ftp", "vmware", "synthetics"]
-                    if nonPhysicalTypes.contains(where: { volumeType.lowercased().contains($0.lowercased()) }) {
-                        logInfo("排除非物理驱动器: \(path) (类型: \(volumeType))")
-                        return false
-                    }
-                }
-                
-                // 如果是本地系统盘但不是外部设备，则排除
-                if let volumeName = output["VolumeName"] as? String {
-                    let systemVolumeNames = ["Macintosh HD", "Macintosh HD - Data"]
-                    if systemVolumeNames.contains(volumeName) {
-                        logInfo("排除系统盘: \(path) (名称: \(volumeName))")
-                        return false
-                    }
-                }
-                
-                // 检查挂载点路径是否为TimeMachine相关
-                if path.contains("TimeMachine") || path.contains("timemachine") || path.contains("backup") || path.contains("备份") {
-                    logInfo("排除备份卷: \(path)")
-                    return false
-                }
-                
-                // 如果是物理设备但没有明确的外部标志，默认为本地设备
-                if isPhysical {
-                    logInfo("驱动器似乎是物理设备，但不是明确的外部设备: \(path)")
-                    
-                    // 如果不是系统盘目录的一部分，可能是USB或Thunderbolt外部驱动器
-                    if !path.hasPrefix("/System") && !path.hasPrefix("/private") && !path.hasPrefix("/Library") {
-                        // 检查路径是否在/Volumes下但不是系统相关卷
-                        let isInVolumes = path.hasPrefix("/Volumes/")
-                        if isInVolumes {
-                            logInfo("判定为可能的外部驱动器: \(path)")
-                            return true
-                        }
-                    }
-                    
-                    // 默认不是外部设备
-                    return false
-                }
-                
-                return false
-            }
-            
-            logInfo("无法确定驱动器类型: \(path)")
-            return false
-        } catch {
-            logError("检查驱动器类型失败: \(path), 错误: \(error.localizedDescription)")
-            return false
         }
     }
     
@@ -560,20 +566,111 @@ class SwapManager: ObservableObject {
         do {
             let output = try await executeCommandWithOutput("/usr/bin/ls", arguments: ["-la", swapFilePath], timeout: timeoutShort)
             
-            await MainActor.run {
-                // Look for symbolic links that point to external drives
-                if output.contains("->") && output.contains("/Volumes/") {
-                    currentSwapLocation = .external
-                } else {
-                    currentSwapLocation = .internalDrive
+            // 如果是符号链接且指向外部驱动器
+            if output.contains("->") && output.contains("/Volumes/") {
+                if let targetPath = output.components(separatedBy: "->").last?.trimmingCharacters(in: .whitespacesAndNewlines) {
+                    let targetURL = URL(fileURLWithPath: targetPath)
+                    let targetDrivePath = targetURL.pathComponents.prefix(2).joined(separator: "/")
+                    
+                    // 找到对应的驱动器
+                    var foundDrive: DriveInfo? = nil
+                    for drive in availableDrives {
+                        if targetPath.hasPrefix(drive.path) {
+                            foundDrive = drive
+                            break
+                        }
+                    }
+                    
+                    await MainActor.run {
+                        currentSwapDrive = foundDrive
+                        isLoading = false
+                    }
                 }
-                isLoading = false
+            } else {
+                // 交换文件在系统驱动器上
+                let systemDrive = availableDrives.first(where: { $0.isSystemDrive })
+                
+                await MainActor.run {
+                    currentSwapDrive = systemDrive
+                    isLoading = false
+                }
             }
         } catch {
             await MainActor.run {
                 lastError = "检测交换文件位置失败: \(error.localizedDescription)"
                 isLoading = false
             }
+        }
+    }
+    
+    // MARK: - Private Methods - Swap File Operations
+    
+    /// 在驱动器之间移动交换文件（使用管理员权限）
+    private func moveSwapFileBetweenDrivesWithAdmin(from sourceDrive: DriveInfo, to destinationDrive: DriveInfo) async throws {
+        // 构建目标路径
+        let targetDirectory = "\(destinationDrive.path)/private/var/vm"
+        let targetSwapFile = "\(targetDirectory)/swapfile"
+        
+        // 1. 在目标驱动器上创建目录结构
+        logInfo("在目标驱动器上创建目录结构: \(targetDirectory)")
+        try await executeCommandWithAdmin("/bin/mkdir", arguments: ["-p", targetDirectory])
+        
+        // 2. 检查目标驱动器上是否已有交换文件
+        logInfo("检查目标驱动器上是否已有交换文件...")
+        let externalSwapExists = (try? await executeCommandWithOutput("/usr/bin/test", arguments: ["-f", targetSwapFile], timeout: timeoutShort)) != nil
+        
+        if externalSwapExists {
+            // 如果已存在，先删除
+            logInfo("目标驱动器上已有交换文件，正在删除...")
+            try await executeCommandWithAdmin("/bin/rm", arguments: [targetSwapFile])
+        }
+        
+        // 3. 复制现有交换文件到目标驱动器
+        logInfo("复制交换文件到目标驱动器: \(targetSwapFile)")
+        try await executeCommandWithAdmin("/bin/cp", arguments: [swapFilePath, targetSwapFile])
+        
+        // 4. 设置适当的权限
+        logInfo("设置交换文件权限...")
+        try await executeCommandWithAdmin("/bin/chmod", arguments: ["644", targetSwapFile])
+        
+        // 5. 删除原始交换文件
+        logInfo("删除原驱动器上的交换文件...")
+        try await executeCommandWithAdmin("/bin/rm", arguments: [swapFilePath])
+        
+        // 6. 创建符号链接
+        logInfo("创建符号链接，将原路径指向新的交换文件...")
+        try await executeCommandWithAdmin("/bin/ln", arguments: ["-s", targetSwapFile, swapFilePath])
+        logInfo("符号链接创建完成")
+    }
+    
+    /// 在指定驱动器上创建新的交换文件（使用管理员权限）
+    private func createSwapFileOnDriveWithAdmin(_ drive: DriveInfo) async throws {
+        if drive.isSystemDrive {
+            // 如果是系统驱动器，使用dynamic_pager创建标准交换文件
+            logInfo("在系统驱动器上创建交换文件...")
+            try await executeCommandWithAdmin("/usr/sbin/dynamic_pager", arguments: ["-F", swapFilePath])
+            logInfo("系统驱动器交换文件创建完成")
+        } else {
+            // 为外部驱动器创建目录结构和交换文件
+            let targetDirectory = "\(drive.path)/private/var/vm"
+            let targetSwapFile = "\(targetDirectory)/swapfile"
+            
+            // 1. 创建目录结构
+            logInfo("在驱动器上创建目录结构: \(targetDirectory)")
+            try await executeCommandWithAdmin("/bin/mkdir", arguments: ["-p", targetDirectory])
+            
+            // 2. 创建空交换文件 (1GB大小)
+            logInfo("创建1GB大小的交换文件...")
+            try await executeCommandWithAdmin("/usr/bin/dd", arguments: ["if=/dev/zero", "of=\(targetSwapFile)", "bs=1m", "count=1024"])
+            
+            // 3. 设置适当的权限
+            logInfo("设置交换文件权限...")
+            try await executeCommandWithAdmin("/bin/chmod", arguments: ["644", targetSwapFile])
+            
+            // 4. 创建符号链接
+            logInfo("创建符号链接，将系统路径指向新的交换文件...")
+            try await executeCommandWithAdmin("/bin/ln", arguments: ["-s", targetSwapFile, swapFilePath])
+            logInfo("符号链接创建完成")
         }
     }
     
@@ -782,64 +879,5 @@ class SwapManager: ObservableObject {
             logError("管理员权限命令执行过程中出错: \(error.localizedDescription)")
             throw error
         }
-    }
-    
-    // MARK: - Private Methods - Swap File Operations
-    
-    /// 使用管理员权限将交换文件移回内部驱动器
-    private func moveToInternalDriveWithAdmin() async throws {
-        if currentSwapLocation == .external {
-            // 1. 检查当前的符号链接
-            logInfo("检查当前交换文件符号链接...")
-            let swapLinkInfo = try await executeCommandWithOutput("/usr/bin/ls", arguments: ["-la", swapFilePath], timeout: timeoutShort)
-            
-            // 2. 删除符号链接
-            logInfo("删除当前的符号链接...")
-            try await executeCommandWithAdmin("/bin/rm", arguments: [swapFilePath])
-            
-            // 3. 重新创建默认交换文件
-            logInfo("在内部驱动器上重新创建交换文件...")
-            try await executeCommandWithAdmin("/usr/sbin/dynamic_pager", arguments: ["-F", swapFilePath])
-            logInfo("内部驱动器交换文件创建完成")
-        } else {
-            logInfo("交换文件已在内部驱动器上，无需移动")
-        }
-    }
-    
-    /// 使用管理员权限将交换文件移动到外部驱动器
-    private func moveToExternalDriveWithAdmin(_ drive: ExternalDrive) async throws {
-        let targetDirectory = "\(drive.path)/private/var/vm"
-        let targetSwapFile = "\(targetDirectory)/swapfile"
-        
-        // 1. 在外部驱动器上创建目录结构
-        logInfo("在外部驱动器上创建目录结构: \(targetDirectory)")
-        try await executeCommandWithAdmin("/bin/mkdir", arguments: ["-p", targetDirectory])
-        
-        // 2. 检查外部驱动器上是否已有交换文件
-        logInfo("检查外部驱动器上是否已有交换文件...")
-        let externalSwapExists = (try? await executeCommandWithOutput("/usr/bin/test", arguments: ["-f", targetSwapFile], timeout: timeoutShort)) != nil
-        
-        if externalSwapExists {
-            // 如果已存在，先删除
-            logInfo("外部驱动器上已有交换文件，正在删除...")
-            try await executeCommandWithAdmin("/bin/rm", arguments: [targetSwapFile])
-        }
-        
-        // 3. 复制现有交换文件到外部驱动器
-        logInfo("复制交换文件到外部驱动器: \(targetSwapFile)")
-        try await executeCommandWithAdmin("/bin/cp", arguments: [swapFilePath, targetSwapFile])
-        
-        // 4. 设置适当的权限
-        logInfo("设置交换文件权限...")
-        try await executeCommandWithAdmin("/bin/chmod", arguments: ["644", targetSwapFile])
-        
-        // 5. 删除原始交换文件
-        logInfo("删除内部驱动器上的原始交换文件...")
-        try await executeCommandWithAdmin("/bin/rm", arguments: [swapFilePath])
-        
-        // 6. 创建符号链接
-        logInfo("创建符号链接，将原路径指向外部交换文件...")
-        try await executeCommandWithAdmin("/bin/ln", arguments: ["-s", targetSwapFile, swapFilePath])
-        logInfo("符号链接创建完成")
     }
 } 

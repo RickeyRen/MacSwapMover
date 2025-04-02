@@ -225,18 +225,61 @@ struct ContentView: View {
                 Text("当前交换文件位置")
                     .font(.headline)
                 
-                HStack(spacing: 20) {
-                    statusCard(
-                        title: "内部驱动器",
-                        iconName: "internaldrive",
-                        isActive: swapManager.currentSwapLocation == .internalDrive
-                    )
-                    
-                    statusCard(
-                        title: "外部驱动器",
-                        iconName: "externaldrive",
-                        isActive: swapManager.currentSwapLocation == .external
-                    )
+                if let currentDrive = swapManager.currentSwapDrive {
+                    HStack {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text(currentDrive.name)
+                                .font(.system(size: 16, weight: .medium))
+                            
+                            HStack {
+                                Image(systemName: currentDrive.isSystemDrive ? "desktopcomputer" : "externaldrive.fill")
+                                    .foregroundColor(.blue)
+                                Text(currentDrive.isSystemDrive ? "系统驱动器" : "外部驱动器")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                                
+                                Spacer()
+                                
+                                Text("\(currentDrive.availableSpace) 可用 / \(currentDrive.size) 总容量")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
+                        }
+                        
+                        Spacer()
+                        
+                        Button(action: {
+                            swapManager.detectSwapLocation()
+                        }) {
+                            Image(systemName: "arrow.clockwise")
+                                .font(.system(size: 14))
+                        }
+                        .buttonStyle(.borderless)
+                    }
+                    .padding()
+                    .background(Color.blue.opacity(0.1))
+                    .cornerRadius(8)
+                } else {
+                    HStack {
+                        Image(systemName: "questionmark.circle")
+                            .foregroundColor(.orange)
+                        
+                        Text("未能检测到交换文件位置")
+                            .foregroundColor(.orange)
+                        
+                        Spacer()
+                        
+                        Button(action: {
+                            swapManager.detectSwapLocation()
+                        }) {
+                            Image(systemName: "arrow.clockwise")
+                                .font(.system(size: 14))
+                        }
+                        .buttonStyle(.borderless)
+                    }
+                    .padding()
+                    .background(Color.orange.opacity(0.1))
+                    .cornerRadius(8)
                 }
             }
             .padding(16)
@@ -274,20 +317,20 @@ struct ContentView: View {
     
     private var actionSection: some View {
         VStack(spacing: 20) {
-            // 选择外部驱动器
-            if swapManager.availableExternalDrives.isEmpty {
+            // 驱动器选择区域
+            if swapManager.availableDrives.isEmpty {
                 VStack(spacing: 12) {
-                    Text("未检测到合适的外部驱动器")
+                    Text("未检测到可用驱动器")
                         .font(.headline)
                     
-                    Text("请连接物理外部硬盘，如USB硬盘或Thunderbolt存储设备")
+                    Text("请确保有足够权限访问驱动器信息")
                         .font(.caption)
                         .foregroundColor(.secondary)
                         .multilineTextAlignment(.center)
                         .padding(.horizontal)
                     
                     Button(action: {
-                        swapManager.findAvailableExternalDrives()
+                        swapManager.findAvailableDrives()
                     }) {
                         HStack {
                             Image(systemName: "arrow.clockwise")
@@ -305,12 +348,12 @@ struct ContentView: View {
             } else {
                 VStack(alignment: .leading, spacing: 12) {
                     HStack {
-                        Text("选择外部驱动器")
+                        Text("选择目标驱动器")
                             .font(.headline)
                         
                         Spacer()
                         
-                        Text("\(swapManager.availableExternalDrives.count)个可用")
+                        Text("\(swapManager.availableDrives.count)个可用")
                             .font(.caption)
                             .foregroundColor(.secondary)
                             .padding(.horizontal, 8)
@@ -319,22 +362,34 @@ struct ContentView: View {
                             .cornerRadius(8)
                     }
                     
-                    Text("只显示物理外部硬盘，网络驱动器和虚拟磁盘已被过滤")
+                    Text("选择要移动交换文件的目标驱动器")
                         .font(.caption)
                         .foregroundColor(.secondary)
                         .padding(.bottom, 4)
                     
-                    ForEach(swapManager.availableExternalDrives) { drive in
+                    ForEach(swapManager.availableDrives) { drive in
                         Button(action: {
-                            swapManager.selectedExternalDrive = drive
+                            swapManager.selectedDrive = drive
                         }) {
                             HStack {
-                                Image(systemName: "externaldrive.fill")
-                                    .foregroundColor(.blue)
+                                Image(systemName: drive.isSystemDrive ? "desktopcomputer" : "externaldrive.fill")
+                                    .foregroundColor(drive.containsSwapFile ? .green : .blue)
                                 
                                 VStack(alignment: .leading, spacing: 2) {
-                                    Text(drive.name)
-                                        .font(.system(size: 14, weight: .medium))
+                                    HStack {
+                                        Text(drive.name)
+                                            .font(.system(size: 14, weight: .medium))
+                                        
+                                        if drive.containsSwapFile {
+                                            Text("当前位置")
+                                                .font(.caption2)
+                                                .padding(.horizontal, 6)
+                                                .padding(.vertical, 2)
+                                                .background(Color.green.opacity(0.2))
+                                                .cornerRadius(4)
+                                                .foregroundColor(.green)
+                                        }
+                                    }
                                     
                                     Text("\(drive.availableSpace) 可用 / \(drive.size) 总容量")
                                         .font(.system(size: 12))
@@ -343,7 +398,7 @@ struct ContentView: View {
                                 
                                 Spacer()
                                 
-                                if drive.id == swapManager.selectedExternalDrive?.id {
+                                if drive.id == swapManager.selectedDrive?.id {
                                     Image(systemName: "checkmark.circle.fill")
                                         .foregroundColor(.green)
                                 }
@@ -353,17 +408,17 @@ struct ContentView: View {
                         .buttonStyle(.plain)
                         .background(
                             RoundedRectangle(cornerRadius: 8)
-                                .fill(drive.id == swapManager.selectedExternalDrive?.id ? Color.blue.opacity(0.1) : Color.clear)
+                                .fill(drive.id == swapManager.selectedDrive?.id ? Color.blue.opacity(0.1) : Color.clear)
                         )
                         .overlay(
                             RoundedRectangle(cornerRadius: 8)
-                                .stroke(Color.gray.opacity(0.2), lineWidth: 1)
+                                .stroke(drive.containsSwapFile ? Color.green.opacity(0.5) : Color.gray.opacity(0.2), lineWidth: 1)
                         )
                     }
                     
                     HStack {
                         Button(action: {
-                            swapManager.findAvailableExternalDrives()
+                            swapManager.findAvailableDrives()
                         }) {
                             HStack {
                                 Image(systemName: "arrow.clockwise")
@@ -374,9 +429,9 @@ struct ContentView: View {
                         
                         Spacer()
                         
-                        if swapManager.selectedExternalDrive != nil {
+                        if swapManager.selectedDrive != nil {
                             Button(action: {
-                                swapManager.selectedExternalDrive = nil
+                                swapManager.selectedDrive = nil
                             }) {
                                 Text("取消选择")
                                     .foregroundColor(.red)
@@ -393,57 +448,49 @@ struct ContentView: View {
             
             // 操作按钮
             VStack(spacing: 16) {
-                // 内部移动到外部按钮
-                Button(action: {
-                    Task {
-                        let result = await swapManager.moveSwapFile(to: .external)
-                        switch result {
-                        case .success:
-                            swapManager.lastError = nil
-                        case .failure(let error):
-                            swapManager.lastError = error.localizedDescription
+                // 移动交换文件按钮
+                if let selectedDrive = swapManager.selectedDrive {
+                    Button(action: {
+                        Task {
+                            let result = await swapManager.moveSwapFile(to: selectedDrive)
+                            switch result {
+                            case .success:
+                                swapManager.lastError = nil
+                            case .failure(let error):
+                                swapManager.lastError = error.localizedDescription
+                            }
                         }
-                    }
-                }) {
-                    HStack {
-                        Image(systemName: "arrow.right.circle.fill")
-                        Text("移动到外部驱动器")
-                    }
-                    .frame(maxWidth: .infinity)
-                    .padding()
-                    .background(
-                        RoundedRectangle(cornerRadius: 8)
-                            .fill(Color.blue)
-                    )
-                    .foregroundColor(.white)
-                }
-                .disabled(swapManager.isLoading || !swapManager.isSIPDisabled || swapManager.selectedExternalDrive == nil || swapManager.currentSwapLocation == .external)
-                
-                // 外部移动到内部按钮
-                Button(action: {
-                    Task {
-                        let result = await swapManager.moveSwapFile(to: .internalDrive)
-                        switch result {
-                        case .success:
-                            swapManager.lastError = nil
-                        case .failure(let error):
-                            swapManager.lastError = error.localizedDescription
+                    }) {
+                        HStack {
+                            Image(systemName: "arrow.right.circle.fill")
+                            Text("移动交换文件到 \(selectedDrive.name)")
                         }
+                        .frame(maxWidth: .infinity)
+                        .padding()
+                        .background(
+                            RoundedRectangle(cornerRadius: 8)
+                                .fill(Color.blue)
+                        )
+                        .foregroundColor(.white)
                     }
-                }) {
-                    HStack {
-                        Image(systemName: "arrow.left.circle.fill")
-                        Text("移回内部驱动器")
+                    .disabled(swapManager.isLoading || !swapManager.isSIPDisabled || 
+                             (swapManager.currentSwapDrive?.id == selectedDrive.id))
+                } else {
+                    Button(action: {}) {
+                        HStack {
+                            Image(systemName: "arrow.right.circle.fill")
+                            Text("请先选择目标驱动器")
+                        }
+                        .frame(maxWidth: .infinity)
+                        .padding()
+                        .background(
+                            RoundedRectangle(cornerRadius: 8)
+                                .fill(Color.gray)
+                        )
+                        .foregroundColor(.white)
                     }
-                    .frame(maxWidth: .infinity)
-                    .padding()
-                    .background(
-                        RoundedRectangle(cornerRadius: 8)
-                            .fill(Color.green)
-                    )
-                    .foregroundColor(.white)
+                    .disabled(true)
                 }
-                .disabled(swapManager.isLoading || !swapManager.isSIPDisabled || swapManager.currentSwapLocation == .internalDrive)
             }
             
             if swapManager.isLoading {
@@ -455,36 +502,8 @@ struct ContentView: View {
         }
         .fixedSize(horizontal: false, vertical: true) // 确保高度适应内容
         .animation(.easeInOut, value: swapManager.isLoading)
-        .animation(.easeInOut, value: swapManager.availableExternalDrives.isEmpty)
+        .animation(.easeInOut, value: swapManager.availableDrives.isEmpty)
     }
-    
-    private func statusCard(title: String, iconName: String, isActive: Bool) -> some View {
-        VStack(spacing: 12) {
-            Image(systemName: iconName.appending(isActive ? ".fill" : ""))
-                .font(.system(size: 28))
-                .foregroundColor(isActive ? .green : .gray)
-            
-            Text(title)
-                .font(.callout)
-                .foregroundColor(isActive ? .primary : .secondary)
-            
-            Text(isActive ? "当前位置" : "")
-                .font(.caption2)
-                .foregroundColor(.green)
-        }
-        .frame(maxWidth: .infinity)
-        .padding(16)
-        .background(
-            RoundedRectangle(cornerRadius: 8)
-                .fill(isActive ? Color.green.opacity(0.1) : Color(.textBackgroundColor))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 8)
-                .stroke(isActive ? Color.green.opacity(0.5) : Color.gray.opacity(0.2), lineWidth: 1)
-        )
-    }
-    
-    // MARK: - Reusable Components
     
     private func statusCard(
         title: String,
